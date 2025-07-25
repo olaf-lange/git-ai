@@ -300,12 +300,22 @@ fn handle_fetch_or_pull(cmd: &str, args: &[String]) {
     if args.is_empty() {
         // git fetch or git pull (no remote): inject default remote and refspec
         if let Some(default_remote) = get_default_remote(&repo) {
-            proxy_to_git(&[
-                cmd.to_string(),
-                default_remote,
+            // Use the default refspec but add --update-head-ok flag for fetch operations
+            let refspec = DEFAULT_REFSPEC.to_string();
+
+            let mut args_to_pass = vec![cmd.to_string()];
+
+            // Only add --update-head-ok for fetch operations
+            if cmd == "fetch" {
+                args_to_pass.push("--update-head-ok".to_string());
+            }
+
+            args_to_pass.extend_from_slice(&[
+                default_remote.clone(),
                 AI_AUTHORSHIP_REFSPEC.to_string(),
-                DEFAULT_REFSPEC.to_string(),
+                refspec,
             ]);
+            proxy_to_git(&args_to_pass);
         } else {
             eprintln!("No git remotes found.");
             std::process::exit(1);
@@ -314,15 +324,22 @@ fn handle_fetch_or_pull(cmd: &str, args: &[String]) {
     }
     if args.len() == 1 && remote_names.contains(&args[0]) {
         // git fetch <remote> or git pull <remote>: inject refspec after remote
-        proxy_to_git(&[
-            cmd.to_string(),
-            args[0].clone(),
-            AI_AUTHORSHIP_REFSPEC.to_string(),
-        ]);
+        let mut args_to_pass = vec![cmd.to_string()];
+
+        // Only add --update-head-ok for fetch operations
+        if cmd == "fetch" {
+            args_to_pass.push("--update-head-ok".to_string());
+        }
+
+        args_to_pass.extend_from_slice(&[args[0].clone(), AI_AUTHORSHIP_REFSPEC.to_string()]);
+        proxy_to_git(&args_to_pass);
         return;
     }
     // More complex: just proxy as-is
+
     let mut full_args = vec![cmd.to_string()];
+
+    // println!("fetching or pulling from remote: {:?}", &full_args);
     full_args.extend_from_slice(args);
     proxy_to_git(&full_args);
 }
