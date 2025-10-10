@@ -6,7 +6,7 @@ use crate::commands::checkpoint_agent::agent_preset::CursorPreset;
 use crate::error::GitAiError;
 use crate::git::refs::notes_add;
 use crate::git::repository::Repository;
-use crate::git::status::{EntryKind, StatusCode};
+use crate::utils::Timer;
 use similar::{ChangeTag, TextDiff};
 use std::collections::HashMap;
 
@@ -17,44 +17,60 @@ pub fn post_commit(
     human_author: String,
     supress_output: bool,
 ) -> Result<(String, AuthorshipLog), GitAiError> {
+    let mut timer = Timer::new();
+
     // Use base_commit parameter if provided, otherwise use "initial" for empty repos
     // This matches the convention in checkpoint.rs
     let parent_sha = base_commit.unwrap_or_else(|| "initial".to_string());
 
     // Initialize the new storage system
     let repo_storage = &repo.storage;
+    timer.start("working_log_for_base_commit");
     let working_log = repo_storage.working_log_for_base_commit(&parent_sha);
+    timer.end("working_log_for_base_commit");
 
     // Pull all working log entries from the parent commit
     let parent_working_log = working_log.read_all_checkpoints()?;
 
     // Filter out untracked files from the working log
+    timer.start("filter_untracked_files");
     let mut filtered_working_log = filter_untracked_files(repo, &parent_working_log, &commit_sha)?;
+    timer.end("filter_untracked_files");
 
     // mutates inline
     CursorPreset::update_cursor_conversations_to_latest(&mut filtered_working_log)?;
 
+    timer.start("compute_authorship_log");
     // --- NEW: Serialize authorship log and store it in notes/ai/{commit_sha} ---
     let mut authorship_log = AuthorshipLog::from_working_log_with_base_commit_and_human_author(
         &filtered_working_log,
         &parent_sha,
         Some(&human_author),
     );
+    timer.start("compute_authorship_log");
 
     // Filter the authorship log to only include committed lines
     // We need to keep ONLY lines that are in the commit, not filter out unstaged lines
+    timer.start("collect_committed_hunks");
     let committed_hunks = collect_committed_hunks(repo, &parent_sha, &commit_sha)?;
+    timer.end("collect_committed_hunks");
 
     // Convert authorship log line numbers from working directory coordinates to commit coordinates
     // The working log uses working directory coordinates (which includes unstaged changes),
     // but the authorship log should store commit coordinates (line numbers as they appear in the commit tree)
+    timer.start("collect_unstaged_hunks");
     let unstaged_hunks = collect_unstaged_hunks(repo, &commit_sha)?;
+    timer.end("collect_unstaged_hunks");
 
     // Convert working directory line numbers to commit line numbers
+    timer.start("convert_authorship_log_to_commit_coordinates");
     convert_authorship_log_to_commit_coordinates(&mut authorship_log, &unstaged_hunks);
+    timer.end("convert_authorship_log_to_commit_coordinates");
 
+    timer.start("filter_to_committed_lines");
     // Now filter to only include committed lines
     authorship_log.filter_to_committed_lines(&committed_hunks);
+    timer.end("filter_to_committed_lines");
 
     // Check if there are unstaged AI-authored lines to preserve in working log
     let has_unstaged_ai_lines = if !unstaged_hunks.is_empty() {
@@ -74,7 +90,9 @@ pub fn post_commit(
         .serialize_to_string()
         .map_err(|_| GitAiError::Generic("Failed to serialize authorship log".to_string()))?;
 
+    timer.start("notes_add");
     notes_add(repo, &commit_sha, &authorship_json)?;
+    timer.end("notes_add");
 
     // Only delete the working log if there are no unstaged AI-authored lines
     // If there are unstaged AI lines, filter and transfer the working log to the new commit
@@ -134,9 +152,11 @@ pub fn post_commit(
     }
 
     if !supress_output {
+        timer.start("stats_for_commit_stats");
         let refname = repo.head()?.name().unwrap().to_string();
         let stats = stats_for_commit_stats(repo, &commit_sha, &refname)?;
         write_stats_to_terminal(&stats);
+        timer.end("stats_for_commit_stats");
     }
     Ok((commit_sha.to_string(), authorship_log))
 }
@@ -382,8 +402,8 @@ fn collect_unstaged_hunks(
 ) -> Result<HashMap<String, Vec<LineRange>>, GitAiError> {
     let mut unstaged_hunks: HashMap<String, Vec<LineRange>> = HashMap::new();
 
-    // Get all files with unstaged changes
-    let statuses = repo.status()?;
+    // Get all files with unstaged changes (fast - only checks tracked files)
+    let unstaged_files = repo.diff_files()?;
 
     // Get the HEAD commit tree (what was just committed)
     let head_commit = repo.find_commit(commit_sha.to_string())?;
@@ -391,13 +411,7 @@ fn collect_unstaged_hunks(
 
     let repo_workdir = repo.workdir()?;
 
-    for entry in &statuses {
-        // Skip files without unstaged changes
-        if entry.unstaged == StatusCode::Unmodified || entry.kind == EntryKind::Ignored {
-            continue;
-        }
-
-        let file_path = &entry.path;
+    for file_path in &unstaged_files {
         let abs_path = repo_workdir.join(file_path);
 
         // Get content from HEAD (what was just committed)

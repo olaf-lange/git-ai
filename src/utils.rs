@@ -1,4 +1,6 @@
 use crate::git::diff_tree_to_tree::Diff;
+use std::collections::HashMap;
+use std::time::Instant;
 
 /// Debug logging utility function
 ///
@@ -45,5 +47,69 @@ pub fn _print_diff(diff: &Diff, old_label: &str, new_label: &str) {
 
     if file_count == 0 {
         println!("  No changes between {} and {}", old_label, new_label);
+    }
+}
+
+/// Timer utility for measuring execution time
+///
+/// Tracks start times for named operations and logs the duration when they complete.
+/// Useful for performance debugging and optimization.
+///
+/// # Example
+///
+/// ```
+/// let mut timing = Timer::new();
+/// timing.start("git_commit");
+/// // ... do work ...
+/// timing.end("git_commit"); // Prints: timer: git_commit took 1.23s
+/// ```
+pub struct Timer {
+    timings: HashMap<String, Instant>,
+    enabled: bool,
+}
+
+impl Timer {
+    /// Create a new Timer instance
+    pub fn new() -> Self {
+        Timer {
+            timings: HashMap::new(),
+            enabled: cfg!(debug_assertions) || std::env::var("GIT_AI_TIMER").is_ok(),
+        }
+    }
+
+    /// Start timing an operation
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - A unique identifier for this timing operation
+    pub fn start(&mut self, key: &str) {
+        // keep this a toy in production
+        if self.enabled {
+            self.timings.insert(key.to_string(), Instant::now());
+        }
+    }
+
+    /// End timing an operation and log the duration
+    ///
+    /// Removes the timing entry and prints the elapsed time in yellow.
+    /// If the key doesn't exist (no matching start() call), this is a no-op.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The identifier used in the corresponding start() call
+    pub fn end(&mut self, key: &str) {
+        if self.enabled {
+            // keep this a toy in production
+            if let Some(start_time) = self.timings.remove(key) {
+                let duration = start_time.elapsed();
+                println!("\x1b[1;33mtimer:\x1b[0m {} took {:?}", key, duration);
+            }
+        }
+    }
+}
+
+impl Default for Timer {
+    fn default() -> Self {
+        Self::new()
     }
 }
