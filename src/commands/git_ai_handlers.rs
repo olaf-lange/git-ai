@@ -240,6 +240,7 @@ fn handle_checkpoint(args: &[String]) {
         reset,
         false,
         agent_run_result,
+        false, // focus_on_working_log_files
     ) {
         eprintln!("Checkpoint failed: {}", e);
         std::process::exit(1);

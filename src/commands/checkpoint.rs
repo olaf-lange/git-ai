@@ -7,7 +7,7 @@ use crate::git::status::{EntryKind, StatusCode};
 use crate::utils::debug_log;
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub fn run(
     repo: &Repository,
@@ -16,6 +16,7 @@ pub fn run(
     reset: bool,
     quiet: bool,
     agent_run_result: Option<AgentRunResult>,
+    focus_on_working_log_files: bool,
 ) -> Result<(usize, usize, usize), GitAiError> {
     // Robustly handle zero-commit repos
     let base_commit = match repo.head() {
@@ -36,15 +37,26 @@ pub fn run(
 
     // Initialize the new storage system
     let repo_storage = RepoStorage::for_repo_path(repo.path());
-    let working_log = repo_storage.working_log_for_base_commit(&base_commit);
+    let working_log_storage = repo_storage.working_log_for_base_commit(&base_commit);
 
-    let files = get_all_tracked_files(repo, &base_commit, &working_log)?;
+    let working_log = working_log_storage.read_all_checkpoints()?;
+    let previously_edited_files = working_log.edited_files;
+
+    // If focus_on_working_log_files is true, use previously_edited_files as pathspecs
+    let pathspecs = if focus_on_working_log_files && !previously_edited_files.is_empty() {
+        Some(previously_edited_files.clone())
+    } else {
+        None
+    };
+
+    let files =
+        get_all_tracked_files(repo, &base_commit, &working_log_storage, pathspecs.as_ref())?;
     let mut checkpoints = if reset {
         // If reset flag is set, start with an empty working log
-        working_log.reset_working_log()?;
+        working_log_storage.reset_working_log()?;
         Vec::new()
     } else {
-        working_log.read_all_checkpoints()?.checkpoints
+        working_log.checkpoints
     };
 
     if show_working_log {
@@ -99,7 +111,7 @@ pub fn run(
     }
 
     // Save current file states and get content hashes
-    let file_content_hashes = save_current_file_states(&working_log, &files)?;
+    let file_content_hashes = save_current_file_states(&working_log_storage, &files)?;
 
     // Order file hashes by key and create a hash of the ordered hashes
     let mut ordered_hashes: Vec<_> = file_content_hashes.iter().collect();
@@ -119,7 +131,7 @@ pub fn run(
     } else {
         // Subsequent checkpoint - diff against last saved state
         get_subsequent_checkpoint_entries(
-            &working_log,
+            &working_log_storage,
             &files,
             &file_content_hashes,
             checkpoints.last(),
@@ -138,7 +150,7 @@ pub fn run(
         }
 
         // Append checkpoint to the working log
-        working_log.append_checkpoint(&checkpoint)?;
+        working_log_storage.append_checkpoint(&checkpoint)?;
         checkpoints.push(checkpoint);
     }
 
@@ -201,11 +213,14 @@ pub fn run(
     Ok((entries.len(), files.len(), checkpoints.len()))
 }
 
-fn get_all_files(repo: &Repository) -> Result<Vec<String>, GitAiError> {
+fn get_all_files(
+    repo: &Repository,
+    pathspecs: Option<&HashSet<String>>,
+) -> Result<Vec<String>, GitAiError> {
     let mut files = Vec::new();
 
     // Use porcelain v2 format to get status
-    let statuses = repo.status(None)?;
+    let statuses = repo.status(pathspecs)?;
 
     for entry in statuses {
         // Skip ignored files
@@ -248,15 +263,23 @@ fn get_all_tracked_files(
     repo: &Repository,
     _base_commit: &str,
     working_log: &PersistedWorkingLog,
+    pathspecs: Option<&HashSet<String>>,
 ) -> Result<Vec<String>, GitAiError> {
-    let mut files = get_all_files(repo)?;
+    let mut files = get_all_files(repo, pathspecs)?;
 
     // Also include files that were in previous checkpoints but might not show up in git status
     // This ensures we track deletions when files return to their original state
     if let Ok(working_log_data) = working_log.read_all_checkpoints() {
         for checkpoint in &working_log_data.checkpoints {
             for entry in &checkpoint.entries {
-                if !files.contains(&entry.file) {
+                // If pathspecs are provided, only include files that match the pathspecs
+                let should_include = if let Some(pathspecs) = pathspecs {
+                    pathspecs.contains(&entry.file)
+                } else {
+                    true
+                };
+
+                if should_include && !files.contains(&entry.file) {
                     // Check if it's a text file before adding
                     if is_text_file(repo, &entry.file) {
                         files.push(entry.file.clone());

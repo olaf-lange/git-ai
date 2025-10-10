@@ -96,7 +96,9 @@ pub fn handle_git(args: &[String]) {
     // run with hooks
     let exit_status = if !parsed_args.is_help && has_repo && !skip_hooks {
         let repository = repository_option.as_mut().unwrap();
+        timer.start("run_pre_command_hooks");
         run_pre_command_hooks(&mut command_hooks_context, &parsed_args, repository);
+        timer.end("run_pre_command_hooks");
         let exit_status = proxy_to_git(&parsed_args.to_invocation_vec(), false);
 
         timer.start("run_post_command_hooks");

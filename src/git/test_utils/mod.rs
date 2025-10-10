@@ -348,7 +348,8 @@ impl TmpRepo {
             false, // show_working_log
             false, // reset
             true,
-            None, // agent_run_result
+            None,  // agent_run_result
+            false, // focus_on_working_log_files
         )
     }
 
@@ -400,6 +401,7 @@ impl TmpRepo {
             false, // reset
             true,
             Some(agent_run_result),
+            false, // focus_on_working_log_files
         )
     }
 
