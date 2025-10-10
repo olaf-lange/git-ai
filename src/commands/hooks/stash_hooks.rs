@@ -57,13 +57,16 @@ pub fn post_stash_hook(
     exit_status: std::process::ExitStatus,
     repository: &mut Repository,
 ) {
-    debug_log("=== STASH POST-COMMAND HOOK ===");
-    debug_log(&format!("Exit status: {}", exit_status));
+    eprintln!("DEBUG: === STASH POST-COMMAND HOOK ===");
+    eprintln!("DEBUG: Exit status: {}", exit_status);
 
     let operation = match get_stash_operation(parsed_args) {
-        Some(op) => op,
+        Some(op) => {
+            eprintln!("DEBUG: Operation: {:?}", op);
+            op
+        }
         None => {
-            debug_log("Could not determine stash operation, skipping post-hook");
+            eprintln!("DEBUG: Could not determine stash operation, skipping post-hook");
             return;
         }
     };
@@ -198,10 +201,10 @@ fn process_stash_apply(
         return;
     }
 
-    debug_log(&format!(
-        "Reconstructing authorship for stash apply from {} to {}",
+    eprintln!(
+        "DEBUG: Reconstructing authorship for stash apply from {} to {}",
         original_head, target_head
-    ));
+    );
 
     // Get human author
     let human_author = get_commit_default_author(repository, &parsed_args.command_args);
@@ -214,13 +217,13 @@ fn process_stash_apply(
         &human_author,
     ) {
         Ok(_) => {
-            debug_log("✓ Successfully reconstructed authorship for stash apply");
+            eprintln!("DEBUG: ✓ Successfully reconstructed authorship for stash apply");
         }
         Err(e) => {
-            debug_log(&format!(
-                "✗ Failed to reconstruct authorship for stash apply: {}",
+            eprintln!(
+                "DEBUG: ✗ Failed to reconstruct authorship for stash apply: {}",
                 e
-            ));
+            );
         }
     }
 }

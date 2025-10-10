@@ -1505,10 +1505,19 @@ pub fn reconstruct_working_log_after_stash_apply(
     let temp_commit_obj = repo.find_commit(temp_working_commit.to_string())?;
     let target_commit_obj = repo.find_commit(target_commit_sha.to_string())?;
 
-    debug_log(&format!(
-        "Running reconstruct_authorship_from_diff: temp={}, target={}, hanging={}",
+    eprintln!(
+        "DEBUG: Running reconstruct_authorship_from_diff: temp={}, target={}, hanging={}",
         temp_working_commit, target_commit_sha, hanging_commit_sha
-    ));
+    );
+
+    // Debug: check what authorship log exists on hanging commit
+    let hanging_log = repo.storage.log_for_commit(&hanging_commit_sha.to_string());
+    if let Ok(attestations) = hanging_log.read_attestations() {
+        eprintln!(
+            "DEBUG: Hanging commit has {} attestations",
+            attestations.len()
+        );
+    }
 
     let new_authorship_log = reconstruct_authorship_from_diff(
         repo,
@@ -1517,11 +1526,11 @@ pub fn reconstruct_working_log_after_stash_apply(
         &hanging_commit_sha.to_string(),
     )?;
 
-    debug_log(&format!(
-        "Reconstructed authorship log has {} file attestations, {} prompts",
+    eprintln!(
+        "DEBUG: Reconstructed authorship log has {} file attestations, {} prompts",
         new_authorship_log.attestations.len(),
         new_authorship_log.metadata.prompts.len()
-    ));
+    );
 
     // Step 6: Convert to checkpoints
     let mut checkpoints = new_authorship_log
@@ -1533,8 +1542,20 @@ pub fn reconstruct_working_log_after_stash_apply(
             ))
         })?;
 
+    eprintln!(
+        "DEBUG: Converted to {} checkpoints before filtering",
+        checkpoints.len()
+    );
+
     // Filter to keep only AI checkpoints - we don't track human-only changes in working logs
+    let before_filter = checkpoints.len();
     checkpoints.retain(|checkpoint| checkpoint.agent_id.is_some());
+
+    eprintln!(
+        "DEBUG: After filtering: {} AI checkpoints (filtered out {} human checkpoints)",
+        checkpoints.len(),
+        before_filter - checkpoints.len()
+    );
 
     // Step 7: Persist blobs and write working log
     let target_working_log = repo.storage.working_log_for_base_commit(target_commit_sha);
