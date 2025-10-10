@@ -67,6 +67,34 @@ pub fn rewrite_authorship_if_needed(
                 merge_squash.source_branch, merge_squash.base_branch
             ));
         }
+        RewriteLogEvent::RebaseComplete { rebase_complete } => {
+            rewrite_authorship_after_rebase(
+                repo,
+                &rebase_complete.original_commits,
+                &rebase_complete.new_commits,
+                &commit_author,
+            )?;
+
+            debug_log(&format!(
+                "✓ Rewrote authorship for {} rebased commits",
+                rebase_complete.new_commits.len()
+            ));
+        }
+        RewriteLogEvent::CherryPickComplete {
+            cherry_pick_complete,
+        } => {
+            rewrite_authorship_after_cherry_pick(
+                repo,
+                &cherry_pick_complete.source_commits,
+                &cherry_pick_complete.new_commits,
+                &commit_author,
+            )?;
+
+            debug_log(&format!(
+                "✓ Rewrote authorship for {} cherry-picked commits",
+                cherry_pick_complete.new_commits.len()
+            ));
+        }
         _ => {}
     }
 
@@ -134,16 +162,17 @@ pub fn rewrite_authorship_after_squash_or_rebase(
     // hanging_commit_sha
     // That way we can get the authorship log pre-squash.
     // Aggregate the results in a variable, then we'll dump a new authorship log.
-    let new_authorship_log = reconstruct_authorship_from_diff(
+    let mut new_authorship_log = reconstruct_authorship_from_diff(
         repo,
         &new_commit,
         &new_commit_parent,
         &hanging_commit_sha,
     )?;
 
-    // println!("Reconstructed authorship log with {:?}", new_authorship_log);
+    // Set the base_commit_sha to the new commit
+    new_authorship_log.metadata.base_commit_sha = new_sha.to_string();
 
-    // Step (Last): Delete the hanging commit
+    // Step 6: Delete the hanging commit
 
     delete_hanging_commit(repo, &hanging_commit_sha)?;
     // println!("Deleted hanging commit: {}", hanging_commit_sha);
@@ -250,6 +279,9 @@ pub fn prepare_working_log_after_squash(
             ))
         })?;
 
+    // Filter to keep only AI checkpoints - we don't track human-only changes in working logs
+    checkpoints.retain(|checkpoint| checkpoint.agent_id.is_some());
+
     // Step 10: For each checkpoint, read the staged file content and save blobs
     let working_log = repo
         .storage
@@ -289,6 +321,358 @@ pub fn prepare_working_log_after_squash(
     }
 
     Ok(checkpoints)
+}
+
+/// Rewrite authorship logs after a rebase operation
+///
+/// This function processes each commit mapping from a rebase and either copies
+/// or reconstructs the authorship log depending on whether the tree changed.
+///
+/// Handles different scenarios:
+/// - 1:1 mapping (normal rebase): Direct commit-to-commit authorship copy/reconstruction
+/// - N:M mapping where N > M (squashing/dropping): Reconstructs authorship from all original commits
+///
+/// # Arguments
+/// * `repo` - Git repository
+/// * `original_commits` - Vector of original commit SHAs (before rebase), oldest first
+/// * `new_commits` - Vector of new commit SHAs (after rebase), oldest first
+/// * `human_author` - The human author identifier
+///
+/// # Returns
+/// Ok if all commits were processed successfully
+pub fn rewrite_authorship_after_rebase(
+    repo: &Repository,
+    original_commits: &[String],
+    new_commits: &[String],
+    human_author: &str,
+) -> Result<(), GitAiError> {
+    // Detect the mapping type
+    if original_commits.len() > new_commits.len() {
+        // Many-to-few mapping (squashing or dropping commits)
+        debug_log(&format!(
+            "Detected many-to-few rebase: {} original -> {} new commits",
+            original_commits.len(),
+            new_commits.len()
+        ));
+
+        // Handle squashing: reconstruct authorship for each new commit from the
+        // corresponding range of original commits
+        handle_squashed_rebase(repo, original_commits, new_commits, human_author)?;
+    } else if original_commits.len() < new_commits.len() {
+        // Few-to-many mapping (commit splitting or adding commits)
+        debug_log(&format!(
+            "Detected few-to-many rebase: {} original -> {} new commits",
+            original_commits.len(),
+            new_commits.len()
+        ));
+
+        // Handle splitting: use the head of originals as source for all new commits
+        // This preserves attribution when commits are split or new commits are added
+        handle_split_rebase(repo, original_commits, new_commits, human_author)?;
+    } else {
+        // 1:1 mapping (normal rebase)
+        debug_log(&format!(
+            "Detected 1:1 rebase: {} commits",
+            original_commits.len()
+        ));
+
+        // Process each old -> new commit mapping
+        for (old_sha, new_sha) in original_commits.iter().zip(new_commits.iter()) {
+            rewrite_single_commit_authorship(repo, old_sha, new_sha, human_author)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle squashed rebase where multiple commits become fewer commits
+///
+/// This reconstructs authorship by using the comprehensive squash logic
+/// that properly traces through all original commits to preserve authorship.
+fn handle_squashed_rebase(
+    repo: &Repository,
+    original_commits: &[String],
+    new_commits: &[String],
+    _human_author: &str,
+) -> Result<(), GitAiError> {
+    // For squashing, we use the last (most recent) original commit as the source
+    // since it contains all the accumulated changes from previous commits
+    let head_of_originals = original_commits
+        .last()
+        .ok_or_else(|| GitAiError::Generic("No original commits found".to_string()))?;
+
+    debug_log(&format!(
+        "Using {} as head of original commits for squash reconstruction",
+        head_of_originals
+    ));
+
+    // Process each new commit using the comprehensive squash logic
+    // This handles the complex case where files from multiple commits need to be blamed
+    for new_sha in new_commits {
+        debug_log(&format!(
+            "Reconstructing authorship for squashed commit: {}",
+            new_sha
+        ));
+
+        // Use the existing squash logic which properly handles multiple commits
+        // by finding the common base and creating a hanging commit with all files
+        let _ = rewrite_authorship_after_squash_or_rebase(
+            repo,
+            "", // branch name not used in the logic
+            head_of_originals,
+            new_sha,
+            false, // not a dry run
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Handle split rebase where commits are split or new commits are added
+///
+/// For split rebases, we attempt reconstruction but handle cases where files
+/// have been restructured or renamed gracefully.
+fn handle_split_rebase(
+    repo: &Repository,
+    original_commits: &[String],
+    new_commits: &[String],
+    human_author: &str,
+) -> Result<(), GitAiError> {
+    // For splitting, we use the last (most recent) original commit as the source
+    // since it contains all the accumulated changes from previous commits
+    let head_of_originals = original_commits
+        .last()
+        .ok_or_else(|| GitAiError::Generic("No original commits found".to_string()))?;
+
+    debug_log(&format!(
+        "Using {} as head of original commits for split/add reconstruction",
+        head_of_originals
+    ));
+
+    // Process each new commit
+    // When commits are split with file restructuring, we try multiple approaches
+    for new_sha in new_commits {
+        debug_log(&format!(
+            "Reconstructing authorship for split/added commit: {}",
+            new_sha
+        ));
+
+        // First try: use squash logic (works if files have same names)
+        let squash_result = rewrite_authorship_after_squash_or_rebase(
+            repo,
+            "", // branch name not used in the logic
+            head_of_originals,
+            new_sha,
+            false, // not a dry run
+        );
+
+        if squash_result.is_err() {
+            // If squash logic fails (e.g., files don't exist), try simpler reconstruction
+            debug_log(&format!(
+                "Squash logic failed for {}, trying simple reconstruction",
+                new_sha
+            ));
+
+            // Try each original commit to see if any works
+            let mut reconstructed = false;
+            for orig_sha in original_commits {
+                if let Ok(_) =
+                    rewrite_single_commit_authorship(repo, orig_sha, new_sha, human_author)
+                {
+                    reconstructed = true;
+                    break;
+                }
+            }
+
+            if !reconstructed {
+                debug_log(&format!(
+                    "Could not reconstruct authorship for {} - files may have been restructured",
+                    new_sha
+                ));
+                // For restructured files, we can't reliably reconstruct authorship
+                // This is ok - the commit just won't have AI authorship attribution
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Rewrite authorship logs after cherry-pick
+///
+/// Cherry-pick is simpler than rebase: it creates new commits by applying patches from source commits.
+/// The mapping is typically 1:1, or 1:0 if a commit becomes empty (already applied).
+///
+/// # Arguments
+/// * `repo` - Git repository
+/// * `source_commits` - Vector of source commit SHAs (commits being cherry-picked), oldest first
+/// * `new_commits` - Vector of new commit SHAs (after cherry-pick), oldest first
+/// * `human_author` - The human author identifier
+///
+/// # Returns
+/// Ok if all commits were processed successfully
+pub fn rewrite_authorship_after_cherry_pick(
+    repo: &Repository,
+    source_commits: &[String],
+    new_commits: &[String],
+    human_author: &str,
+) -> Result<(), GitAiError> {
+    debug_log(&format!(
+        "Rewriting authorship for cherry-pick: {} source -> {} new commits",
+        source_commits.len(),
+        new_commits.len()
+    ));
+
+    // Cherry-pick can result in fewer commits if some become empty
+    // Match up commits by position (they're applied in order)
+    let min_len = std::cmp::min(source_commits.len(), new_commits.len());
+
+    for i in 0..min_len {
+        let source_sha = &source_commits[i];
+        let new_sha = &new_commits[i];
+
+        debug_log(&format!(
+            "Processing cherry-picked commit {} -> {}",
+            source_sha, new_sha
+        ));
+
+        // Use the same logic as rebase for single commit rewriting
+        if let Err(e) = rewrite_single_commit_authorship(repo, source_sha, new_sha, human_author) {
+            debug_log(&format!(
+                "Failed to rewrite authorship for {} -> {}: {}",
+                source_sha, new_sha, e
+            ));
+            // Continue with other commits even if one fails
+        }
+    }
+
+    // If there are fewer new commits than source commits, some were dropped (empty)
+    if new_commits.len() < source_commits.len() {
+        debug_log(&format!(
+            "Note: {} source commits resulted in {} new commits (some became empty)",
+            source_commits.len(),
+            new_commits.len()
+        ));
+    }
+
+    // If there are more new commits, this shouldn't normally happen with cherry-pick
+    // but handle it gracefully
+    if new_commits.len() > source_commits.len() {
+        debug_log(&format!(
+            "Warning: More new commits ({}) than source commits ({})",
+            new_commits.len(),
+            source_commits.len()
+        ));
+    }
+
+    Ok(())
+}
+
+/// Rewrite authorship for a single commit after rebase
+///
+/// Fast path: If trees are identical, just copy the authorship log
+/// Slow path: If trees differ, reconstruct via blame in hanging commit context
+fn rewrite_single_commit_authorship(
+    repo: &Repository,
+    old_sha: &str,
+    new_sha: &str,
+    _human_author: &str,
+) -> Result<(), GitAiError> {
+    let old_commit = repo.find_commit(old_sha.to_string())?;
+    let new_commit = repo.find_commit(new_sha.to_string())?;
+
+    // Fast path: Check if trees are identical
+    if trees_identical(&old_commit, &new_commit)? {
+        // Trees are the same, just copy the authorship log with new SHA
+        copy_authorship_log(repo, old_sha, new_sha)?;
+        debug_log(&format!(
+            "Copied authorship log from {} to {} (trees identical)",
+            old_sha, new_sha
+        ));
+        return Ok(());
+    }
+
+    // Slow path: Trees differ, need reconstruction
+    debug_log(&format!(
+        "Reconstructing authorship for {} -> {} (trees differ)",
+        old_sha, new_sha
+    ));
+
+    let new_authorship_log = reconstruct_authorship_for_commit(repo, old_sha, new_sha)?;
+
+    // Save the reconstructed log
+    let authorship_json = new_authorship_log
+        .serialize_to_string()
+        .map_err(|_| GitAiError::Generic("Failed to serialize authorship log".to_string()))?;
+
+    crate::git::refs::notes_add(repo, new_sha, &authorship_json)?;
+
+    Ok(())
+}
+
+/// Check if two commits have identical trees
+fn trees_identical(commit1: &Commit, commit2: &Commit) -> Result<bool, GitAiError> {
+    let tree1 = commit1.tree()?;
+    let tree2 = commit2.tree()?;
+    Ok(tree1.id() == tree2.id())
+}
+
+/// Copy authorship log from one commit to another
+fn copy_authorship_log(repo: &Repository, from_sha: &str, to_sha: &str) -> Result<(), GitAiError> {
+    // Try to get the authorship log from the old commit
+    match get_reference_as_authorship_log_v3(repo, from_sha) {
+        Ok(mut log) => {
+            // Update the base_commit_sha to the new commit
+            log.metadata.base_commit_sha = to_sha.to_string();
+
+            // Save to the new commit
+            let authorship_json = log.serialize_to_string().map_err(|_| {
+                GitAiError::Generic("Failed to serialize authorship log".to_string())
+            })?;
+
+            crate::git::refs::notes_add(repo, to_sha, &authorship_json)?;
+            Ok(())
+        }
+        Err(_) => {
+            // No authorship log exists for the old commit, that's ok
+            debug_log(&format!("No authorship log found for {}", from_sha));
+            Ok(())
+        }
+    }
+}
+
+/// Reconstruct authorship for a single commit that changed during rebase
+fn reconstruct_authorship_for_commit(
+    repo: &Repository,
+    old_sha: &str,
+    new_sha: &str,
+) -> Result<AuthorshipLog, GitAiError> {
+    // Get commits
+    let old_commit = repo.find_commit(old_sha.to_string())?;
+    let new_commit = repo.find_commit(new_sha.to_string())?;
+    let new_parent = new_commit.parent(0)?;
+    let old_parent = old_commit.parent(0)?;
+
+    // Create "hanging commit" for blame context
+    // This applies the changes from (old_parent -> new_parent) onto old_commit
+    let hanging_commit_sha = apply_diff_as_merge_commit(
+        repo,
+        &old_parent.id().to_string(),
+        &new_parent.id().to_string(),
+        old_sha,
+    )?;
+
+    // Reconstruct authorship by running blame in hanging commit context
+    let mut reconstructed_log =
+        reconstruct_authorship_from_diff(repo, &new_commit, &new_parent, &hanging_commit_sha)?;
+
+    // Set the base_commit_sha to the new commit
+    reconstructed_log.metadata.base_commit_sha = new_sha.to_string();
+
+    // Cleanup
+    delete_hanging_commit(repo, &hanging_commit_sha)?;
+
+    Ok(reconstructed_log)
 }
 
 #[allow(dead_code)]
@@ -389,14 +773,6 @@ fn apply_diff_as_merge_commit(
     let ours_tree = ours_commit.tree()?;
     let theirs_tree = theirs_commit.tree()?;
 
-    // NOTE: Below is the libgit2 version of the logic (merge, write, find)
-    // Perform the merge of trees to an index
-    // let mut index = repo.merge_trees_favor_ours(&base_tree, &ours_tree, &theirs_tree)?;
-
-    // Write the index to a tree object
-    // let tree_oid = index.write_tree_to(repo)?;
-    // let merged_tree = repo.find_tree(tree_oid)?;
-
     // TODO Verify new version is correct (we should be getting a tree oid straight back from merge_trees_favor_ours)
     let tree_oid = repo.merge_trees_favor_ours(&base_tree, &ours_tree, &theirs_tree)?;
     let merged_tree = repo.find_tree(tree_oid)?;
@@ -475,8 +851,11 @@ fn reconstruct_authorship_from_diff(
 
     let mut authorship_entries = Vec::new();
 
+    let deltas: Vec<_> = diff.deltas().collect();
+    debug_log(&format!("Diff has {} deltas", deltas.len()));
+
     // Iterate through each file in the diff
-    for delta in diff.deltas() {
+    for delta in deltas {
         let old_file_path = delta.old_file().path();
         let new_file_path = delta.new_file().path();
 
@@ -537,16 +916,29 @@ fn reconstruct_authorship_from_diff(
         for change in diff.iter_all_changes() {
             match change.tag() {
                 ChangeTag::Equal => {
-                    let line_count = change.value().lines().count() as u32;
+                    // Equal lines are unchanged - skip them for now
+                    // TODO: May need to handle moved lines in the future
+                    // Count newlines instead of lines() to handle trailing newlines correctly
+                    let line_count = change.value().matches('\n').count() as u32;
                     _old_line += line_count;
                     new_line += line_count;
                 }
                 ChangeTag::Delete => {
                     // Deleted lines only advance the old line counter
-                    _old_line += change.value().lines().count() as u32;
+                    // Count newlines instead of lines() to handle trailing newlines correctly
+                    _old_line += change.value().matches('\n').count() as u32;
                 }
                 ChangeTag::Insert => {
-                    let inserted: Vec<&str> = change.value().lines().collect();
+                    let change_value = change.value();
+                    let inserted: Vec<&str> = change_value.lines().collect();
+                    // Count actual newlines for accurate line tracking
+                    let actual_line_count = change_value.matches('\n').count() as u32;
+
+                    debug_log(&format!(
+                        "Found {} inserted lines in file {}",
+                        inserted.len(),
+                        file_path_str
+                    ));
 
                     // For each inserted line, try to find the same content in the hanging commit
                     for (i, inserted_line) in inserted.iter().enumerate() {
@@ -562,32 +954,45 @@ fn reconstruct_authorship_from_diff(
                             }
                         }
 
-                        let blame_line_number = if let Some(h_line_no) = matched_hanging_line {
+                        // Only try to blame lines that exist in the hanging commit
+                        // If we can't find a match, the line is new and has no historical authorship
+                        if let Some(h_line_no) = matched_hanging_line {
                             used_hanging_line_numbers.insert(h_line_no);
-                            h_line_no
-                        } else {
-                            // Fallback: use the position in the new file
-                            new_line + (i as u32)
-                        };
 
-                        let blame_result = run_blame_in_context(
-                            repo,
-                            &file_path_str,
-                            blame_line_number,
-                            hanging_commit_sha,
-                        )?;
+                            let blame_result = run_blame_in_context(
+                                repo,
+                                &file_path_str,
+                                h_line_no,
+                                hanging_commit_sha,
+                            );
 
-                        if let Some((author, prompt)) = blame_result {
-                            authorship_entries.push((
-                                file_path_str.clone(),
-                                blame_line_number,
-                                author,
-                                prompt,
-                            ));
+                            // Handle blame errors gracefully (e.g., file doesn't exist in hanging commit)
+                            match blame_result {
+                                Ok(Some((author, prompt))) => {
+                                    authorship_entries.push((
+                                        file_path_str.clone(),
+                                        h_line_no,
+                                        author,
+                                        prompt,
+                                    ));
+                                }
+                                Ok(None) => {
+                                    // No authorship found, that's ok
+                                }
+                                Err(e) => {
+                                    // Log the error but continue processing other lines
+                                    debug_log(&format!(
+                                        "Failed to blame line {} in {}: {}",
+                                        h_line_no, file_path_str, e
+                                    ));
+                                }
+                            }
                         }
+                        // else: Line doesn't exist in hanging commit, skip it (no historical authorship)
                     }
 
-                    new_line += inserted.len() as u32;
+                    // Use actual newline count for accurate line tracking
+                    new_line += actual_line_count;
                 }
             }
         }
@@ -890,6 +1295,277 @@ fn build_commit_path_to_base(
     commits.reverse();
 
     Ok(commits)
+}
+
+pub fn walk_commits_to_base(
+    repository: &Repository,
+    head: &str,
+    base: &str,
+) -> Result<Vec<String>, crate::error::GitAiError> {
+    let mut commits = Vec::new();
+    let mut current = repository.find_commit(head.to_string())?;
+    let base_str = base.to_string();
+
+    while current.id().to_string() != base_str {
+        commits.push(current.id().to_string());
+        current = current.parent(0)?;
+    }
+
+    Ok(commits)
+}
+
+/// Reconstruct working log after a reset that preserves working directory
+///
+/// This handles --soft, --mixed, and --merge resets where we move HEAD backward
+/// but keep the working directory state. We need to create a working log that
+/// captures AI authorship from the "unwound" commits plus any existing uncommitted changes.
+pub fn reconstruct_working_log_after_reset(
+    repo: &Repository,
+    target_commit_sha: &str, // Where we reset TO
+    old_head_sha: &str,      // Where HEAD was BEFORE reset
+    human_author: &str,
+) -> Result<(), GitAiError> {
+    debug_log(&format!(
+        "Reconstructing working log after reset from {} to {}",
+        old_head_sha, target_commit_sha
+    ));
+
+    // Step 1: Create a temporary commit representing the working directory (staged + unstaged)
+    // This has the target commit as parent
+    let working_tree_oid = capture_working_directory_as_tree(repo)?;
+    let working_tree = repo.find_tree(working_tree_oid)?;
+
+    let target_commit = repo.find_commit(target_commit_sha.to_string())?;
+    let temp_working_commit = repo.commit(
+        None,
+        &target_commit.author()?,
+        &target_commit.committer()?,
+        "Temporary commit representing working directory after reset",
+        &working_tree,
+        &[&target_commit],
+    )?;
+
+    // Step 2: Create hanging commit with the working directory tree but old_head as parent
+    // This preserves AI authorship from old_head while having working directory content
+    let old_head_commit = repo.find_commit(old_head_sha.to_string())?;
+    let hanging_commit_sha = repo.commit(
+        None,
+        &old_head_commit.author()?,
+        &old_head_commit.committer()?,
+        &format!(
+            "Hanging commit for reset: working dir with parent {}",
+            old_head_sha
+        ),
+        &working_tree,       // Same tree as working directory
+        &[&old_head_commit], // But parent is old_head (preserves AI context)
+    )?;
+
+    // Step 3: Attach authorship log from old HEAD to hanging commit
+    // This is essential so that blame can find the AI authorship
+    create_authorship_log_for_hanging_commit(
+        repo,
+        old_head_sha,
+        &hanging_commit_sha.to_string(),
+        human_author,
+    )?;
+
+    // Step 4: Reconstruct authorship via blame
+    // Compare: working directory (temp) vs target
+    // Context: hanging commit (which has old_head's AI authorship)
+    let temp_commit_obj = repo.find_commit(temp_working_commit.to_string())?;
+    let target_commit_obj = repo.find_commit(target_commit_sha.to_string())?;
+
+    debug_log(&format!(
+        "Running reconstruct_authorship_from_diff: temp={}, target={}, hanging={}",
+        temp_working_commit, target_commit_sha, hanging_commit_sha
+    ));
+
+    let new_authorship_log = reconstruct_authorship_from_diff(
+        repo,
+        &temp_commit_obj,
+        &target_commit_obj,
+        &hanging_commit_sha.to_string(),
+    )?;
+
+    debug_log(&format!(
+        "Reconstructed authorship log has {} file attestations, {} prompts",
+        new_authorship_log.attestations.len(),
+        new_authorship_log.metadata.prompts.len()
+    ));
+
+    // Step 4: Convert to checkpoints
+    let mut checkpoints = new_authorship_log
+        .convert_to_checkpoints_for_squash(human_author)
+        .map_err(|e| {
+            GitAiError::Generic(format!(
+                "Failed to convert authorship log to checkpoints: {}",
+                e
+            ))
+        })?;
+
+    // Filter to keep only AI checkpoints - we don't track human-only changes in working logs
+    checkpoints.retain(|checkpoint| checkpoint.agent_id.is_some());
+
+    // Step 5: Persist blobs and write working log
+    let new_working_log = repo.storage.working_log_for_base_commit(target_commit_sha);
+    // reset first (can have stuff in it from before if you're operating on HEAD)
+    new_working_log.reset_working_log()?;
+
+    for checkpoint in &mut checkpoints {
+        persist_checkpoint_blobs(repo, checkpoint, target_commit_sha)?;
+        new_working_log.append_checkpoint(checkpoint)?;
+    }
+
+    // Step 6: Cleanup hanging commits
+    delete_hanging_commit(repo, &hanging_commit_sha.to_string())?;
+    delete_hanging_commit(repo, &temp_working_commit.to_string())?;
+
+    // Delete old working log
+    repo.storage
+        .delete_working_log_for_base_commit(old_head_sha)?;
+
+    debug_log(&format!(
+        "Created {} checkpoints in working log for {}",
+        checkpoints.len(),
+        target_commit_sha
+    ));
+
+    Ok(())
+}
+
+/// Helper: Capture current working directory + index as a tree
+fn capture_working_directory_as_tree(repo: &Repository) -> Result<String, GitAiError> {
+    let mut args = repo.global_args_for_exec();
+    args.push("write-tree".to_string());
+    let output = crate::git::repository::exec_git(&args)?;
+    let tree_oid = String::from_utf8(output.stdout)?.trim().to_string();
+    Ok(tree_oid)
+}
+
+/// Helper: Persist file blobs for a checkpoint (reuse from prepare_working_log_after_squash)
+fn persist_checkpoint_blobs(
+    repo: &Repository,
+    checkpoint: &mut crate::authorship::working_log::Checkpoint,
+    base_commit_sha: &str,
+) -> Result<(), GitAiError> {
+    use sha2::{Digest, Sha256};
+
+    let working_log = repo.storage.working_log_for_base_commit(base_commit_sha);
+    let mut file_hashes = Vec::new();
+
+    for entry in &mut checkpoint.entries {
+        // Read from index using git show :path
+        let mut args = repo.global_args_for_exec();
+        args.push("show".to_string());
+        args.push(format!(":{}", entry.file));
+
+        let output = crate::git::repository::exec_git(&args)?;
+        let file_content = String::from_utf8(output.stdout)
+            .map_err(|_| GitAiError::Generic(format!("Failed to read file: {}", entry.file)))?;
+
+        let blob_sha = working_log.persist_file_version(&file_content)?;
+        entry.blob_sha = blob_sha.clone();
+        file_hashes.push((entry.file.clone(), blob_sha));
+    }
+
+    // Compute combined hash
+    file_hashes.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut combined_hasher = Sha256::new();
+    for (file_path, hash) in &file_hashes {
+        combined_hasher.update(file_path.as_bytes());
+        combined_hasher.update(hash.as_bytes());
+    }
+    checkpoint.diff = format!("{:x}", combined_hasher.finalize());
+
+    Ok(())
+}
+
+/// Create an authorship log for the hanging commit by combining the existing
+/// authorship log and working log from the old HEAD commit
+fn create_authorship_log_for_hanging_commit(
+    repo: &Repository,
+    old_head_sha: &str,
+    hanging_commit_sha: &str,
+    human_author: &str,
+) -> Result<(), GitAiError> {
+    debug_log(&format!(
+        "Creating authorship log for hanging commit {} from old HEAD {}",
+        hanging_commit_sha, old_head_sha
+    ));
+
+    // Step 1: Try to get existing authorship log from old HEAD
+    let mut authorship_log = match get_reference_as_authorship_log_v3(repo, old_head_sha) {
+        Ok(log) => {
+            debug_log(&format!(
+                "Found existing authorship log for {} with {} attestations",
+                old_head_sha,
+                log.attestations.len()
+            ));
+            log
+        }
+        Err(_) => {
+            debug_log(&format!("No existing authorship log for {}", old_head_sha));
+            AuthorshipLog::new()
+        }
+    };
+
+    // Step 2: Get working log for old HEAD (if exists)
+    let working_log = repo.storage.working_log_for_base_commit(old_head_sha);
+    let checkpoints = match working_log.read_all_checkpoints() {
+        Ok(checkpoints) if !checkpoints.is_empty() => {
+            debug_log(&format!(
+                "Found {} checkpoints in working log for {}",
+                checkpoints.len(),
+                old_head_sha
+            ));
+            checkpoints
+        }
+        _ => {
+            debug_log(&format!("No working log for {}", old_head_sha));
+            Vec::new()
+        }
+    };
+
+    // Step 3: Apply checkpoints to authorship log (like post_commit does)
+    if !checkpoints.is_empty() {
+        let mut session_additions = std::collections::HashMap::new();
+        let mut session_deletions = std::collections::HashMap::new();
+
+        for checkpoint in &checkpoints {
+            authorship_log.apply_checkpoint(
+                checkpoint,
+                Some(human_author),
+                &mut session_additions,
+                &mut session_deletions,
+            );
+        }
+
+        authorship_log.finalize(&session_additions, &session_deletions);
+
+        debug_log(&format!(
+            "Applied working log checkpoints, now have {} attestations, {} prompts",
+            authorship_log.attestations.len(),
+            authorship_log.metadata.prompts.len()
+        ));
+    }
+
+    // Step 4: Set the base_commit_sha to the hanging commit
+    authorship_log.metadata.base_commit_sha = hanging_commit_sha.to_string();
+
+    // Step 5: Save the authorship log to the hanging commit
+    let authorship_json = authorship_log
+        .serialize_to_string()
+        .map_err(|_| GitAiError::Generic("Failed to serialize authorship log".to_string()))?;
+
+    crate::git::refs::notes_add(repo, hanging_commit_sha, &authorship_json)?;
+
+    debug_log(&format!(
+        "Attached authorship log to hanging commit {} with {} attestations",
+        hanging_commit_sha,
+        authorship_log.attestations.len()
+    ));
+
+    Ok(())
 }
 
 #[cfg(test)]

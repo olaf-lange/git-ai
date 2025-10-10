@@ -1,15 +1,18 @@
-use crate::commands::commit_hooks;
-use crate::commands::commit_hooks::get_commit_default_author;
-use crate::commands::fetch_hooks;
-use crate::commands::push_hooks;
+use crate::commands::hooks::cherry_pick_hooks;
+use crate::commands::hooks::commit_hooks;
+use crate::commands::hooks::fetch_hooks;
+use crate::commands::hooks::merge_hooks;
+use crate::commands::hooks::push_hooks;
+use crate::commands::hooks::rebase_hooks;
+use crate::commands::hooks::reset_hooks;
 use crate::config;
-use crate::git::cli_parser::is_dry_run;
 use crate::git::cli_parser::{ParsedGitInvocation, parse_git_cli_args};
 use crate::git::find_repository;
 use crate::git::repository::Repository;
 use crate::git::rewrite_log::MergeSquashEvent;
 use crate::git::rewrite_log::RewriteLogEvent;
 use crate::utils::Timer;
+
 use crate::utils::debug_log;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -54,8 +57,10 @@ fn uninstall_forwarding_handlers() {
     }
 }
 
-struct CommandHooksContext {
-    pre_commit_hook_result: Option<bool>,
+pub struct CommandHooksContext {
+    pub pre_commit_hook_result: Option<bool>,
+    pub rebase_original_head: Option<String>,
+    pub _rebase_onto: Option<String>,
 }
 
 pub fn handle_git(args: &[String]) {
@@ -69,6 +74,8 @@ pub fn handle_git(args: &[String]) {
 
     let mut command_hooks_context = CommandHooksContext {
         pre_commit_hook_result: None,
+        rebase_original_head: None,
+        _rebase_onto: None,
     };
 
     let parsed_args = parse_git_cli_args(args);
@@ -129,7 +136,15 @@ fn run_pre_command_hooks(
                 commit_hooks::commit_pre_command_hook(parsed_args, repository),
             );
         }
-
+        Some("rebase") => {
+            rebase_hooks::pre_rebase_hook(parsed_args, repository, command_hooks_context);
+        }
+        Some("reset") => {
+            reset_hooks::pre_reset_hook(parsed_args, repository);
+        }
+        Some("cherry-pick") => {
+            cherry_pick_hooks::pre_cherry_pick_hook(parsed_args, repository, command_hooks_context);
+        }
         _ => {}
     }
 }
@@ -142,84 +157,28 @@ fn run_post_command_hooks(
 ) {
     // Post-command hooks
     match parsed_args.command.as_deref() {
-        Some("commit") => {
-            if let Some(pre_commit_hook_result) = command_hooks_context.pre_commit_hook_result {
-                if !pre_commit_hook_result {
-                    debug_log("Skipping git-ai post-commit hook because pre-commit hook failed");
-                    return;
-                }
-            }
-            let supress_output = parsed_args.has_command_flag("--porcelain")
-                || parsed_args.has_command_flag("--quiet")
-                || parsed_args.has_command_flag("-q")
-                || parsed_args.has_command_flag("--no-status");
-
-            commit_hooks::commit_post_command_hook(
-                parsed_args,
-                exit_status,
-                repository,
-                supress_output,
-            );
-        }
+        Some("commit") => commit_hooks::commit_post_command_hook(
+            parsed_args,
+            exit_status,
+            repository,
+            command_hooks_context,
+        ),
         Some("fetch") => fetch_hooks::fetch_post_command_hook(parsed_args, exit_status),
         Some("push") => push_hooks::push_post_command_hook(parsed_args, exit_status),
-        Some("reset") => {
-            if parsed_args.has_command_flag("--hard") {
-                let base_head = repository.head().unwrap().target().unwrap().to_string();
-                let _ = repository
-                    .storage
-                    .delete_working_log_for_base_commit(&base_head);
-
-                debug_log(&format!(
-                    "Reset --hard: deleted working log for {}",
-                    base_head
-                ));
-            }
-            // soft and mixed coming soon
-        }
-        Some("merge") => {
-            if parsed_args.has_command_flag("--squash")
-                && exit_status.success()
-                && !is_dry_run(&parsed_args.command_args)
-            {
-                let base_branch = repository.head().unwrap().name().unwrap().to_string();
-                let base_head = repository.head().unwrap().target().unwrap().to_string();
-
-                let commit_author =
-                    get_commit_default_author(&repository, &parsed_args.command_args);
-
-                let source_branch = parsed_args.pos_command(0).unwrap();
-
-                let source_head_sha = match repository
-                    .revparse_single(source_branch.as_str())
-                    .and_then(|obj| obj.peel_to_commit())
-                {
-                    Ok(commit) => commit.id(),
-                    Err(_) => {
-                        // If we can't resolve the branch, skip logging this event
-                        return;
-                    }
-                };
-
-                // println!("source_head_sha: {}", source_head_sha);
-                // println!("source_branch: {}", source_branch);
-
-                // println!("base_branch: {}", base_branch);
-                // println!("base_sha: {}", base_head);
-
-                repository.handle_rewrite_log_event(
-                    RewriteLogEvent::merge_squash(MergeSquashEvent::new(
-                        source_branch.clone(),
-                        source_head_sha,
-                        base_branch,
-                        base_head,
-                    )),
-                    commit_author,
-                    false,
-                    true,
-                );
-            }
-        }
+        Some("reset") => reset_hooks::post_reset_hook(parsed_args, repository, exit_status),
+        Some("merge") => merge_hooks::post_merge_hook(parsed_args, exit_status, repository),
+        Some("rebase") => rebase_hooks::handle_rebase_post_command(
+            command_hooks_context,
+            parsed_args,
+            exit_status,
+            repository,
+        ),
+        Some("cherry-pick") => cherry_pick_hooks::post_cherry_pick_hook(
+            command_hooks_context,
+            parsed_args,
+            exit_status,
+            repository,
+        ),
         _ => {}
     }
 }

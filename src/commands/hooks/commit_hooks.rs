@@ -1,7 +1,9 @@
 use crate::authorship::pre_commit;
+use crate::commands::git_handlers::CommandHooksContext;
 use crate::git::cli_parser::{ParsedGitInvocation, is_dry_run};
 use crate::git::repository::Repository;
 use crate::git::rewrite_log::RewriteLogEvent;
+use crate::utils::debug_log;
 
 pub fn commit_pre_command_hook(
     parsed_args: &ParsedGitInvocation,
@@ -36,7 +38,7 @@ pub fn commit_post_command_hook(
     parsed_args: &ParsedGitInvocation,
     exit_status: std::process::ExitStatus,
     repository: &mut Repository,
-    supress_output: bool,
+    command_hooks_context: &mut CommandHooksContext,
 ) {
     if is_dry_run(&parsed_args.command_args) {
         return;
@@ -45,6 +47,18 @@ pub fn commit_post_command_hook(
     if !exit_status.success() {
         return;
     }
+
+    if let Some(pre_commit_hook_result) = command_hooks_context.pre_commit_hook_result {
+        if !pre_commit_hook_result {
+            debug_log("Skipping git-ai post-commit hook because pre-commit hook failed");
+            return;
+        }
+    }
+
+    let supress_output = parsed_args.has_command_flag("--porcelain")
+        || parsed_args.has_command_flag("--quiet")
+        || parsed_args.has_command_flag("-q")
+        || parsed_args.has_command_flag("--no-status");
 
     let original_commit = repository.pre_command_base_commit.clone();
     let new_sha = repository.head().ok().map(|h| h.target().ok()).flatten();
