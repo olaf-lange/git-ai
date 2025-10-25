@@ -728,64 +728,77 @@ pub fn rewrite_authorship_after_commit_amend(
     repo: &Repository,
     original_commit: &str,
     amended_commit: &str,
-    human_author: String,
+    _human_author: String,
 ) -> Result<AuthorshipLog, GitAiError> {
-    // Step 1: Load the existing authorship log for the original commit (or create empty if none)
-    let mut authorship_log = match get_reference_as_authorship_log_v3(repo, original_commit) {
-        Ok(log) => {
-            // Found existing log - use it as the base
-            log
-        }
-        Err(_) => {
-            // No existing authorship log - create a new empty one
-            let mut log = AuthorshipLog::new();
-            // Set base_commit_sha to the original commit
-            log.metadata.base_commit_sha = original_commit.to_string();
-            log
-        }
-    };
+    use crate::authorship::virtual_attribution::VirtualAttributions;
 
-    // Step 2: Load the working log for the original commit (if exists)
-    let repo_storage = &repo.storage;
-    let working_log = repo_storage.working_log_for_base_commit(original_commit);
-    let checkpoints = match working_log.read_all_checkpoints() {
-        Ok(checkpoints) => checkpoints,
-        Err(_) => {
-            // No working log found - just return the existing authorship log with updated commit SHA
-            // Update the base_commit_sha to the amended commit
-            authorship_log.metadata.base_commit_sha = amended_commit.to_string();
-            return Ok(authorship_log);
-        }
-    };
+    // Get the files that changed between original and amended commit
+    let changed_files = repo.list_commit_files(amended_commit, None)?;
+    let pathspecs: Vec<String> = changed_files.into_iter().collect();
 
-    // Step 3: Apply all checkpoints from the working log to the authorship log
-    let mut session_additions = std::collections::HashMap::new();
-    let mut session_deletions = std::collections::HashMap::new();
+    if pathspecs.is_empty() {
+        // No files changed, just update the base commit SHA
+        let mut authorship_log = match get_reference_as_authorship_log_v3(repo, original_commit) {
+            Ok(log) => log,
+            Err(_) => {
+                let mut log = AuthorshipLog::new();
+                log.metadata.base_commit_sha = amended_commit.to_string();
+                log
+            }
+        };
+        authorship_log.metadata.base_commit_sha = amended_commit.to_string();
 
-    for checkpoint in &checkpoints {
-        authorship_log.apply_checkpoint(
-            checkpoint,
-            Some(&human_author),
-            &mut session_additions,
-            &mut session_deletions,
-        );
+        // Save the updated log
+        let authorship_json = authorship_log
+            .serialize_to_string()
+            .map_err(|_| GitAiError::Generic("Failed to serialize authorship log".to_string()))?;
+        crate::git::refs::notes_add(repo, amended_commit, &authorship_json)?;
+
+        // Clean up working log
+        repo.storage
+            .delete_working_log_for_base_commit(original_commit)?;
+
+        return Ok(authorship_log);
     }
 
-    // Finalize the log (cleanup, consolidate, calculate metrics)
-    authorship_log.finalize(&session_additions, &session_deletions);
+    // Check if original commit has an authorship log with prompts
+    let has_existing_log = get_reference_as_authorship_log_v3(repo, original_commit).is_ok();
+    let has_existing_prompts = if has_existing_log {
+        let original_log = get_reference_as_authorship_log_v3(repo, original_commit).unwrap();
+        !original_log.metadata.prompts.is_empty()
+    } else {
+        false
+    };
 
-    // Update the base_commit_sha to the amended commit
+    // Create VirtualAttributions from working log checkpoints and get authorship log
+    let repo_clone = repo.clone();
+    let (_working_va, mut authorship_log) = smol::block_on(async {
+        VirtualAttributions::from_working_log_for_commit(
+            repo_clone,
+            original_commit.to_string(),
+            &pathspecs,
+            if has_existing_prompts {
+                None
+            } else {
+                Some(_human_author.clone())
+            },
+        )
+        .await
+    })?;
+
+    // Update base commit SHA to the amended commit
     authorship_log.metadata.base_commit_sha = amended_commit.to_string();
 
-    // Step 4: Save the authorship log with the amended commit SHA
+    // Save the authorship log
     let authorship_json = authorship_log
         .serialize_to_string()
         .map_err(|_| GitAiError::Generic("Failed to serialize authorship log".to_string()))?;
 
     crate::git::refs::notes_add(repo, amended_commit, &authorship_json)?;
 
-    // Step 5: Delete the working log for the original commit
-    repo_storage.delete_working_log_for_base_commit(original_commit)?;
+    // Clean up working log
+    repo.storage
+        .delete_working_log_for_base_commit(original_commit)?;
 
     Ok(authorship_log)
 }

@@ -173,7 +173,11 @@ impl VirtualAttributions {
         // Step 2: Get HEAD's authorship log
         let mut authorship_log = match get_reference_as_authorship_log_v3(&repo, &head_sha) {
             Ok(log) => log,
-            Err(_) => AuthorshipLog::new(),
+            Err(_) => {
+                let mut log = AuthorshipLog::new();
+                log.metadata.base_commit_sha = head_sha.clone();
+                log
+            }
         };
 
         // Step 3: Get working log for HEAD and apply checkpoints
@@ -219,12 +223,13 @@ impl VirtualAttributions {
                 // Get attribution from the authorship log
                 let mut line_attributions = Vec::new();
 
-                // Find file in authorship log
-                if let Some(file_attestation) = authorship_log
+                // Debug: Check if file exists in authorship log
+                let file_attestation = authorship_log
                     .attestations
                     .iter()
-                    .find(|a| a.file_path == *file_path)
-                {
+                    .find(|a| a.file_path == *file_path);
+
+                if let Some(file_attestation) = file_attestation {
                     // Convert authorship log entries to line attributions
                     for entry in &file_attestation.entries {
                         for line_range in &entry.line_ranges {
@@ -261,6 +266,125 @@ impl VirtualAttributions {
         }
 
         Ok(virtual_attrs)
+    }
+
+    /// Create VirtualAttributions from working log checkpoints for a specific base commit
+    /// Returns both the VirtualAttributions and the AuthorshipLog with applied checkpoints
+    pub async fn from_working_log_for_commit(
+        repo: Repository,
+        base_commit: String,
+        pathspecs: &[String],
+        human_author: Option<String>,
+    ) -> Result<
+        (
+            Self,
+            crate::authorship::authorship_log_serialization::AuthorshipLog,
+        ),
+        GitAiError,
+    > {
+        use crate::authorship::authorship_log_serialization::AuthorshipLog;
+        use crate::git::refs::get_reference_as_authorship_log_v3;
+
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+
+        // Step 1: Get base commit's authorship log (or create empty)
+        let mut authorship_log = match get_reference_as_authorship_log_v3(&repo, &base_commit) {
+            Ok(log) => log,
+            Err(_) => {
+                let mut log = AuthorshipLog::new();
+                log.metadata.base_commit_sha = base_commit.clone();
+                log
+            }
+        };
+
+        // Step 2: Get working log for base commit and apply checkpoints
+        let working_log = repo.storage.working_log_for_base_commit(&base_commit);
+        if let Ok(checkpoints) = working_log.read_all_checkpoints() {
+            let mut session_additions = std::collections::HashMap::new();
+            let mut session_deletions = std::collections::HashMap::new();
+
+            for checkpoint in &checkpoints {
+                authorship_log.apply_checkpoint(
+                    checkpoint,
+                    human_author.as_deref(),
+                    &mut session_additions,
+                    &mut session_deletions,
+                );
+            }
+
+            authorship_log.finalize(&session_additions, &session_deletions);
+        }
+
+        // Step 3: Build attributions from working directory files
+        let mut virtual_attrs = VirtualAttributions {
+            repo: repo.clone(),
+            base_commit,
+            attributions: HashMap::new(),
+            file_contents: HashMap::new(),
+            ts,
+        };
+
+        // Process each pathspec - read from working directory
+        for file_path in pathspecs {
+            if let Ok(workdir) = repo.workdir() {
+                let abs_path = workdir.join(file_path);
+
+                // Read working directory content
+                let file_content = if abs_path.exists() {
+                    std::fs::read_to_string(&abs_path).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+
+                // Get attribution from the authorship log
+                let mut line_attributions = Vec::new();
+
+                // Debug: Check if file exists in authorship log
+                let file_attestation = authorship_log
+                    .attestations
+                    .iter()
+                    .find(|a| a.file_path == *file_path);
+
+                if let Some(file_attestation) = file_attestation {
+                    // Convert authorship log entries to line attributions
+                    for entry in &file_attestation.entries {
+                        for line_range in &entry.line_ranges {
+                            let (start, end) = match line_range {
+                                crate::authorship::authorship_log::LineRange::Single(line) => {
+                                    (*line, *line)
+                                }
+                                crate::authorship::authorship_log::LineRange::Range(start, end) => {
+                                    (*start, *end)
+                                }
+                            };
+
+                            line_attributions.push(LineAttribution {
+                                start_line: start,
+                                end_line: end,
+                                author_id: entry.hash.clone(),
+                                overridden: false,
+                            });
+                        }
+                    }
+                }
+
+                // Convert to character attributions
+                let char_attributions =
+                    line_attributions_to_attributions(&line_attributions, &file_content, ts);
+
+                virtual_attrs
+                    .attributions
+                    .insert(file_path.clone(), (char_attributions, line_attributions));
+                virtual_attrs
+                    .file_contents
+                    .insert(file_path.clone(), file_content);
+            }
+        }
+
+        Ok((virtual_attrs, authorship_log))
     }
 
     /// Convert this VirtualAttributions to an AuthorshipLog
