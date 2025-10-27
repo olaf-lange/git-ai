@@ -35,19 +35,12 @@ impl VirtualAttributions {
             .unwrap_or_default()
             .as_millis();
 
-        // Load prompts from base commit's authorship log
-        let prompts =
-            match crate::git::refs::get_reference_as_authorship_log_v3(&repo, &base_commit) {
-                Ok(log) => log.metadata.prompts,
-                Err(_) => BTreeMap::new(),
-            };
-
         let mut virtual_attrs = VirtualAttributions {
             repo,
             base_commit,
             attributions: HashMap::new(),
             file_contents: HashMap::new(),
-            prompts,
+            prompts: BTreeMap::new(),
             ts,
         };
 
@@ -101,22 +94,14 @@ impl VirtualAttributions {
         &self,
         prompt_id: &str,
     ) -> Result<crate::authorship::authorship_log::PromptRecord, GitAiError> {
-        // Search through the commit history looking for this prompt ID
-        // Start from base_commit and walk backwards
-        let mut args = self.repo.global_args_for_exec();
-        args.push("log".to_string());
-        args.push("--all".to_string());
-        args.push("--format=%H".to_string());
-        args.push("-n".to_string());
-        args.push("100".to_string()); // Limit search to last 100 commits
-        args.push(self.base_commit.clone());
+        // Use git grep to search for the prompt ID in authorship notes
+        let shas = crate::git::refs::grep_ai_notes(&self.repo, &format!("\"{}\"", prompt_id))
+            .unwrap_or_default();
 
-        let output = crate::git::repository::exec_git(&args)?;
-        let stdout = String::from_utf8(output.stdout)?;
-
-        for commit_sha in stdout.lines() {
+        // Check the most recent commit with this prompt ID
+        if let Some(latest_sha) = shas.first() {
             if let Ok(log) =
-                crate::git::refs::get_reference_as_authorship_log_v3(&self.repo, commit_sha)
+                crate::git::refs::get_reference_as_authorship_log_v3(&self.repo, latest_sha)
             {
                 if let Some(prompt) = log.metadata.prompts.get(prompt_id) {
                     return Ok(prompt.clone());
@@ -238,132 +223,19 @@ impl VirtualAttributions {
         &self.repo
     }
 
-    /// Alias for new_for_base_commit for clarity
-    #[allow(dead_code)]
-    pub async fn from_commit(
-        repo: Repository,
-        commit_sha: String,
-        pathspecs: &[String],
-    ) -> Result<Self, GitAiError> {
-        Self::new_for_base_commit(repo, commit_sha, pathspecs).await
-    }
-
     /// Create VirtualAttributions from current repository state (HEAD + working log)
     #[allow(dead_code)]
     pub async fn from_repo_state(
         repo: Repository,
         pathspecs: &[String],
     ) -> Result<Self, GitAiError> {
-        use crate::authorship::authorship_log_serialization::AuthorshipLog;
-        use crate::git::refs::get_reference_as_authorship_log_v3;
-
-        let ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-
         // Step 1: Get HEAD SHA
         let head_ref = repo.head()?;
         let head_sha = head_ref.target()?;
 
-        // Step 2: Get HEAD's authorship log
-        let mut authorship_log = match get_reference_as_authorship_log_v3(&repo, &head_sha) {
-            Ok(log) => log,
-            Err(_) => {
-                let mut log = AuthorshipLog::new();
-                log.metadata.base_commit_sha = head_sha.clone();
-                log
-            }
-        };
-
-        // Step 3: Get working log for HEAD and apply checkpoints
-        let working_log = repo.storage.working_log_for_base_commit(&head_sha);
-        if let Ok(checkpoints) = working_log.read_all_checkpoints() {
-            let mut session_additions = std::collections::HashMap::new();
-            let mut session_deletions = std::collections::HashMap::new();
-
-            for checkpoint in &checkpoints {
-                authorship_log.apply_checkpoint(
-                    checkpoint,
-                    Some(&CheckpointKind::Human.to_str()),
-                    &mut session_additions,
-                    &mut session_deletions,
-                );
-            }
-
-            authorship_log.finalize(&session_additions, &session_deletions);
-        }
-
-        // Step 4: Build attributions from working directory files
-        // Prompts are already in the authorship_log we built above
-        let mut virtual_attrs = VirtualAttributions {
-            repo: repo.clone(),
-            base_commit: head_sha,
-            attributions: HashMap::new(),
-            file_contents: HashMap::new(),
-            prompts: authorship_log.metadata.prompts.clone(),
-            ts,
-        };
-
-        // Process each pathspec - read from working directory
-        // For now, we'll run the computation sequentially since we need the authorship log state
-        for file_path in pathspecs {
-            if let Ok(workdir) = repo.workdir() {
-                let abs_path = workdir.join(file_path);
-
-                // Read working directory content
-                let file_content = if abs_path.exists() {
-                    std::fs::read_to_string(&abs_path).unwrap_or_default()
-                } else {
-                    String::new()
-                };
-
-                // Get attribution from the authorship log
-                let mut line_attributions = Vec::new();
-
-                // Debug: Check if file exists in authorship log
-                let file_attestation = authorship_log
-                    .attestations
-                    .iter()
-                    .find(|a| a.file_path == *file_path);
-
-                if let Some(file_attestation) = file_attestation {
-                    // Convert authorship log entries to line attributions
-                    for entry in &file_attestation.entries {
-                        for line_range in &entry.line_ranges {
-                            let (start, end) = match line_range {
-                                crate::authorship::authorship_log::LineRange::Single(line) => {
-                                    (*line, *line)
-                                }
-                                crate::authorship::authorship_log::LineRange::Range(start, end) => {
-                                    (*start, *end)
-                                }
-                            };
-
-                            line_attributions.push(LineAttribution {
-                                start_line: start,
-                                end_line: end,
-                                author_id: entry.hash.clone(),
-                                overridden: false,
-                            });
-                        }
-                    }
-                }
-
-                // Convert to character attributions
-                let char_attributions =
-                    line_attributions_to_attributions(&line_attributions, &file_content, ts);
-
-                virtual_attrs
-                    .attributions
-                    .insert(file_path.clone(), (char_attributions, line_attributions));
-                virtual_attrs
-                    .file_contents
-                    .insert(file_path.clone(), file_content);
-            }
-        }
-
-        Ok(virtual_attrs)
+        // Step 2: Use new_for_base_commit to establish authorship for all pathspecs
+        // This will run blame to find all old authorship and discover prompts from history
+        Self::new_for_base_commit(repo, head_sha, pathspecs).await
     }
 
     /// Create VirtualAttributions from working log checkpoints for a specific base commit
@@ -499,7 +371,7 @@ impl VirtualAttributions {
     }
 
     /// Create VirtualAttributions from raw components (used for transformations)
-    pub fn from_raw_data(
+    pub fn new(
         repo: Repository,
         base_commit: String,
         attributions: HashMap<String, (Vec<Attribution>, Vec<LineAttribution>)>,
@@ -516,7 +388,7 @@ impl VirtualAttributions {
         }
     }
 
-    pub fn from_raw_data_with_prompts(
+    pub fn new_with_prompts(
         repo: Repository,
         base_commit: String,
         attributions: HashMap<String, (Vec<Attribution>, Vec<LineAttribution>)>,
@@ -620,15 +492,6 @@ impl VirtualAttributions {
         Ok(authorship_log)
     }
 
-    /// Convert to initial working log state (stub for now)
-    #[allow(dead_code)]
-    pub fn to_initial_working_log_state(
-        &self,
-    ) -> Result<Vec<crate::authorship::working_log::Checkpoint>, GitAiError> {
-        // TODO: Implement checkpoint conversion
-        // This will require rethinking how checkpoints work
-        todo!("Checkpoint conversion not yet implemented")
-    }
 
     /// Split VirtualAttributions into committed and uncommitted buckets
     ///
@@ -865,199 +728,7 @@ impl VirtualAttributions {
         Ok((authorship_log, initial_attributions))
     }
 
-    /// Create VirtualAttributions from working log, excluding committed lines
-    ///
-    /// This is useful for operations like amend, rebase, etc. where we need to preserve
-    /// unstaged work. The pattern is: Old Working Log - Committed Lines = Unstaged Work
-    ///
-    /// This does line-level filtering: for files that are committed, it only keeps
-    /// attributions for lines that are NOT in the new commit's authorship log.
-    #[allow(dead_code)]
-    pub async fn from_working_log_excluding_committed(
-        repo: Repository,
-        original_commit: &str,
-        new_commit: &str,
-    ) -> Result<Self, GitAiError> {
-        use crate::authorship::attribution_tracker::line_attributions_to_attributions;
-        use std::collections::{HashMap, HashSet};
 
-        // Step 1: Get files from old working log (checkpoints + INITIAL)
-        let old_working_log = repo.storage.working_log_for_base_commit(original_commit);
-        let old_checkpoints = old_working_log.read_all_checkpoints()?;
-        let initial_attributions = old_working_log.read_initial_attributions();
-
-        if old_checkpoints.is_empty() && initial_attributions.files.is_empty() {
-            // No working log, return empty VirtualAttributions
-            return Ok(VirtualAttributions {
-                repo,
-                base_commit: new_commit.to_string(),
-                attributions: HashMap::new(),
-                file_contents: HashMap::new(),
-                prompts: std::collections::BTreeMap::new(),
-                ts: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis(),
-            });
-        }
-
-        // Step 2: Get committed line ranges from new commit's authorship log
-        let mut committed_lines: HashMap<String, HashSet<u32>> = HashMap::new();
-        if let Ok(authorship_log) =
-            crate::git::refs::get_reference_as_authorship_log_v3(&repo, new_commit)
-        {
-            for attestation in &authorship_log.attestations {
-                let file_lines = committed_lines
-                    .entry(attestation.file_path.clone())
-                    .or_default();
-                for entry in &attestation.entries {
-                    for line_range in &entry.line_ranges {
-                        match line_range {
-                            crate::authorship::authorship_log::LineRange::Single(line) => {
-                                file_lines.insert(*line);
-                            }
-                            crate::authorship::authorship_log::LineRange::Range(start, end) => {
-                                for line in *start..=*end {
-                                    file_lines.insert(line);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Step 3: Collect files from checkpoints and filter out committed lines
-        let mut checkpoint_files: HashMap<
-            String,
-            Vec<crate::authorship::attribution_tracker::LineAttribution>,
-        > = HashMap::new();
-
-        // Also collect prompts from checkpoints
-        let mut checkpoint_prompts: std::collections::BTreeMap<
-            String,
-            crate::authorship::authorship_log::PromptRecord,
-        > = std::collections::BTreeMap::new();
-
-        for checkpoint in &old_checkpoints {
-            // Extract prompt from checkpoint if it has agent_id
-            if let Some(agent_id) = &checkpoint.agent_id {
-                let messages = if let Some(transcript) = &checkpoint.transcript {
-                    transcript.messages.clone()
-                } else {
-                    Vec::new()
-                };
-
-                // Generate author_id from checkpoint info
-                let author_id = if checkpoint.kind == CheckpointKind::Human {
-                    checkpoint.author.clone()
-                } else {
-                    // For AI checkpoints, generate session hash
-                    crate::authorship::authorship_log_serialization::generate_short_hash(
-                        &agent_id.id,
-                        &agent_id.tool,
-                    )
-                };
-
-                checkpoint_prompts.entry(author_id).or_insert_with(|| {
-                    crate::authorship::authorship_log::PromptRecord {
-                        agent_id: agent_id.clone(),
-                        human_author: None,
-                        messages,
-                        total_additions: 0,
-                        total_deletions: 0,
-                        accepted_lines: 0,
-                        overriden_lines: 0,
-                    }
-                });
-            }
-
-            for entry in &checkpoint.entries {
-                let file_committed_lines = committed_lines.get(&entry.file);
-
-                // Filter line attributions: keep only lines NOT in committed set
-                let filtered_attrs: Vec<_> = entry
-                    .line_attributions
-                    .iter()
-                    .filter(|attr| {
-                        if let Some(committed) = file_committed_lines {
-                            // Keep if ANY line in the range is not committed
-                            (attr.start_line..=attr.end_line).any(|line| !committed.contains(&line))
-                        } else {
-                            // File not committed at all, keep all attributions
-                            true
-                        }
-                    })
-                    .cloned()
-                    .collect();
-                if !filtered_attrs.is_empty() {
-                    checkpoint_files
-                        .entry(entry.file.clone())
-                        .or_default()
-                        .extend(filtered_attrs);
-                }
-            }
-        }
-
-        // Step 4: Build VirtualAttributions from unstaged lines
-        let mut attributions = HashMap::new();
-        let mut file_contents = HashMap::new();
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-
-        let workdir = repo.workdir()?;
-        for (file_path, line_attrs) in checkpoint_files {
-            if line_attrs.is_empty() {
-                continue;
-            }
-
-            // Get working directory content
-            let abs_path = workdir.join(&file_path);
-            let working_content = if abs_path.exists() {
-                std::fs::read_to_string(&abs_path).unwrap_or_default()
-            } else {
-                String::new()
-            };
-
-            // Regenerate char attributions from line attributions
-            let char_attrs = line_attributions_to_attributions(&line_attrs, &working_content, ts);
-
-            attributions.insert(file_path.clone(), (char_attrs, line_attrs));
-            file_contents.insert(file_path, working_content);
-        }
-
-        // Load prompts from INITIAL file, original commit's authorship log, and checkpoints
-        let mut prompts: std::collections::BTreeMap<
-            String,
-            crate::authorship::authorship_log::PromptRecord,
-        > = initial_attributions.prompts.into_iter().collect();
-
-        // Merge prompts from checkpoints
-        for (author_id, prompt) in checkpoint_prompts {
-            prompts.entry(author_id).or_insert(prompt);
-        }
-
-        // Also load prompts from the original commit's authorship log
-        if let Ok(original_log) =
-            crate::git::refs::get_reference_as_authorship_log_v3(&repo, original_commit)
-        {
-            for (author_id, prompt) in original_log.metadata.prompts {
-                prompts.entry(author_id).or_insert(prompt);
-            }
-        }
-
-        Ok(VirtualAttributions {
-            repo,
-            base_commit: new_commit.to_string(),
-            attributions,
-            file_contents,
-            prompts,
-            ts,
-        })
-    }
-}
 
 /// Merge two VirtualAttributions, favoring the primary for overlaps
 pub fn merge_attributions_favoring_first(
@@ -1290,28 +961,6 @@ fn compute_attributions_for_file(
             // File doesn't exist at this commit or can't be blamed, skip it
             Ok(None)
         }
-    }
-}
-
-/// Get file content at a specific commit
-fn get_file_content_at_commit(
-    repo: &Repository,
-    commit_sha: &str,
-    file_path: &str,
-) -> Result<String, GitAiError> {
-    let commit = repo.find_commit(commit_sha.to_string())?;
-    let tree = commit.tree()?;
-
-    match tree.get_path(std::path::Path::new(file_path)) {
-        Ok(entry) => {
-            if let Ok(blob) = repo.find_blob(entry.id()) {
-                let blob_content = blob.content().unwrap_or_default();
-                Ok(String::from_utf8_lossy(&blob_content).to_string())
-            } else {
-                Ok(String::new())
-            }
-        }
-        Err(_) => Ok(String::new()),
     }
 }
 

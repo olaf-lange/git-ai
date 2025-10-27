@@ -179,7 +179,6 @@ pub fn prepare_working_log_after_squash(
 /// * `original_commits` - Vector of original commit SHAs (before rebase), oldest first
 /// * `new_commits` - Vector of new commit SHAs (after rebase), oldest first
 /// * `_human_author` - The human author identifier (unused in this implementation)
-#[allow(dead_code)]
 pub fn rewrite_authorship_after_rebase_v2(
     repo: &Repository,
     original_head: &str,
@@ -236,7 +235,7 @@ pub fn rewrite_authorship_after_rebase_v2(
                 contents.insert(file, content.clone());
             }
         }
-        crate::authorship::virtual_attribution::VirtualAttributions::from_raw_data(
+        crate::authorship::virtual_attribution::VirtualAttributions::new(
             current_va.repo().clone(),
             current_va.base_commit().to_string(),
             attrs,
@@ -352,7 +351,6 @@ pub fn rewrite_authorship_after_rebase_v2(
 /// * `source_commits` - Vector of source commit SHAs (commits being cherry-picked), oldest first
 /// * `new_commits` - Vector of new commit SHAs (after cherry-pick), oldest first
 /// * `_human_author` - The human author identifier (unused in this implementation)
-#[allow(dead_code)]
 pub fn rewrite_authorship_after_cherry_pick(
     repo: &Repository,
     source_commits: &[String],
@@ -423,7 +421,7 @@ pub fn rewrite_authorship_after_cherry_pick(
                 contents.insert(file, content.clone());
             }
         }
-        crate::authorship::virtual_attribution::VirtualAttributions::from_raw_data(
+        crate::authorship::virtual_attribution::VirtualAttributions::new(
             current_va.repo().clone(),
             current_va.base_commit().to_string(),
             attrs,
@@ -529,7 +527,6 @@ pub fn rewrite_authorship_after_cherry_pick(
 }
 
 /// Check if two commits have identical trees
-#[allow(dead_code)]
 fn trees_identical(commit1: &Commit, commit2: &Commit) -> Result<bool, GitAiError> {
     let tree1 = commit1.tree()?;
     let tree2 = commit2.tree()?;
@@ -537,7 +534,6 @@ fn trees_identical(commit1: &Commit, commit2: &Commit) -> Result<bool, GitAiErro
 }
 
 /// Copy authorship log from one commit to another
-#[allow(dead_code)]
 fn copy_authorship_log(repo: &Repository, from_sha: &str, to_sha: &str) -> Result<(), GitAiError> {
     // Try to get the authorship log from the old commit
     match get_reference_as_authorship_log_v3(repo, from_sha) {
@@ -890,7 +886,6 @@ fn get_pathspecs_from_commits(
 }
 
 /// Transform VirtualAttributions to match a new final state (single-source variant)
-#[allow(dead_code)]
 fn transform_attributions_to_final_state(
     source_va: &crate::authorship::virtual_attribution::VirtualAttributions,
     final_state: HashMap<String, String>,
@@ -1010,7 +1005,7 @@ fn transform_attributions_to_final_state(
     // Preserve prompts from source VA
     let prompts = source_va.prompts().clone();
 
-    Ok(VirtualAttributions::from_raw_data_with_prompts(
+    Ok(VirtualAttributions::new_with_prompts(
         repo,
         base_commit,
         attributions,
