@@ -1,10 +1,8 @@
-use crate::authorship::rebase_authorship::rewrite_authorship_after_squash_or_rebase;
+use crate::authorship::rebase_authorship::prepare_working_log_after_squash;
 use crate::git::find_repository_in_path;
 
 pub fn handle_squash_authorship(args: &[String]) {
     // Parse squash-authorship-specific arguments
-    let mut dry_run = false;
-    let mut branch = None;
     let mut new_sha = None;
     let mut old_sha = None;
 
@@ -12,14 +10,13 @@ pub fn handle_squash_authorship(args: &[String]) {
     while i < args.len() {
         match args[i].as_str() {
             "--dry-run" => {
-                dry_run = true;
+                // Dry-run flag is parsed but not used in current implementation
                 i += 1;
             }
             _ => {
                 // Positional arguments: branch, new_sha, old_sha
-                if branch.is_none() {
-                    branch = Some(args[i].clone());
-                } else if new_sha.is_none() {
+                // Note: branch argument kept for CLI compatibility but not used
+                if new_sha.is_none() {
                     new_sha = Some(args[i].clone());
                 } else if old_sha.is_none() {
                     old_sha = Some(args[i].clone());
@@ -33,15 +30,6 @@ pub fn handle_squash_authorship(args: &[String]) {
     }
 
     // Validate required arguments
-    let branch = match branch {
-        Some(b) => b,
-        None => {
-            eprintln!("Error: branch argument is required");
-            eprintln!("Usage: git-ai squash-authorship <branch> <new_sha> <old_sha> [--dry-run]");
-            std::process::exit(1);
-        }
-    };
-
     let new_sha = match new_sha {
         Some(s) => s,
         None => {
@@ -71,9 +59,7 @@ pub fn handle_squash_authorship(args: &[String]) {
         }
     };
 
-    if let Err(e) =
-        rewrite_authorship_after_squash_or_rebase(&repo, &branch, &old_sha, &new_sha, dry_run)
-    {
+    if let Err(e) = prepare_working_log_after_squash(&repo, &old_sha, &new_sha, "") {
         eprintln!("Squash authorship failed: {}", e);
         std::process::exit(1);
     }
