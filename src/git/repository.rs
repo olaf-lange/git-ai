@@ -1374,6 +1374,53 @@ impl Repository {
         Ok(output.stdout)
     }
 
+    /// Get content of all staged files concurrently
+    /// Returns a HashMap of file paths to their staged content as strings
+    /// Skips files that fail to read or aren't valid UTF-8
+    pub fn get_all_staged_files_content(
+        &self,
+        file_paths: &[String],
+    ) -> Result<HashMap<String, String>, GitAiError> {
+        use futures::future::join_all;
+        use std::sync::Arc;
+
+        const MAX_CONCURRENT: usize = 30;
+
+        let repo_global_args = self.global_args_for_exec();
+        let semaphore = Arc::new(smol::lock::Semaphore::new(MAX_CONCURRENT));
+
+        let futures: Vec<_> = file_paths
+            .iter()
+            .map(|file_path| {
+                let mut args = repo_global_args.clone();
+                args.push("show".to_string());
+                args.push(format!(":{}", file_path));
+                let file_path = file_path.clone();
+                let semaphore = semaphore.clone();
+
+                async move {
+                    let _permit = semaphore.acquire().await;
+                    let result = exec_git(&args).and_then(|output| {
+                        String::from_utf8(output.stdout)
+                            .map_err(|e| GitAiError::Utf8Error(e.utf8_error()))
+                    });
+                    (file_path, result)
+                }
+            })
+            .collect();
+
+        let results = smol::block_on(async { join_all(futures).await });
+
+        let mut staged_files = HashMap::new();
+        for (file_path, result) in results {
+            if let Ok(content) = result {
+                staged_files.insert(file_path, content);
+            }
+        }
+
+        Ok(staged_files)
+    }
+
     /// List all files changed in a commit
     /// Returns a HashSet of file paths relative to the repository root
     pub fn list_commit_files(
@@ -1449,6 +1496,31 @@ impl Repository {
         let diff_output = String::from_utf8(output.stdout)?;
 
         parse_diff_added_lines(&diff_output)
+    }
+
+    /// Get list of changed files between two refs using `git diff --name-only`
+    /// Returns a Vec of file paths that differ between the two refs
+    pub fn diff_changed_files(
+        &self,
+        from_ref: &str,
+        to_ref: &str,
+    ) -> Result<Vec<String>, GitAiError> {
+        let mut args = self.global_args_for_exec();
+        args.push("diff".to_string());
+        args.push("--name-only".to_string());
+        args.push(from_ref.to_string());
+        args.push(to_ref.to_string());
+
+        let output = exec_git(&args)?;
+        let stdout = String::from_utf8(output.stdout)?;
+
+        let files: Vec<String> = stdout
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| line.to_string())
+            .collect();
+
+        Ok(files)
     }
 
     /// Get added line ranges from git diff between a commit and the working directory

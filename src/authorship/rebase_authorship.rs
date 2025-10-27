@@ -104,7 +104,6 @@ pub fn rewrite_authorship_if_needed(
 /// * `source_head_sha` - SHA of the feature branch that was squashed
 /// * `target_branch_head_sha` - SHA of the current HEAD (target branch where we're merging into)
 /// * `_human_author` - The human author identifier (unused in current implementation)
-#[allow(dead_code)]
 pub fn prepare_working_log_after_squash(
     repo: &Repository,
     source_head_sha: &str,
@@ -117,18 +116,7 @@ pub fn prepare_working_log_after_squash(
     use std::collections::HashMap;
 
     // Step 1: Get list of changed files between the two branches
-    let mut args = repo.global_args_for_exec();
-    args.push("diff".to_string());
-    args.push("--name-only".to_string());
-    args.push(source_head_sha.to_string());
-    args.push(target_branch_head_sha.to_string());
-
-    let output = crate::git::repository::exec_git(&args)?;
-    let changed_files: Vec<String> = String::from_utf8(output.stdout)?
-        .lines()
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect();
+    let changed_files = repo.diff_changed_files(source_head_sha, target_branch_head_sha)?;
 
     if changed_files.is_empty() {
         // No files changed, nothing to do
@@ -157,19 +145,7 @@ pub fn prepare_working_log_after_squash(
     })?;
 
     // Step 3: Read staged files content (final state after squash)
-    let mut staged_files: HashMap<String, String> = HashMap::new();
-    for file_path in &changed_files {
-        let mut args = repo.global_args_for_exec();
-        args.push("show".to_string());
-        args.push(format!(":{}", file_path));
-
-        let output = crate::git::repository::exec_git(&args);
-        if let Ok(output) = output {
-            if let Ok(file_content) = String::from_utf8(output.stdout) {
-                staged_files.insert(file_path.clone(), file_content);
-            }
-        }
-    }
+    let staged_files = repo.get_all_staged_files_content(&changed_files)?;
 
     // Step 4: Merge VirtualAttributions, favoring target branch (HEAD)
     let merged_va = merge_attributions_favoring_first(target_va, source_va, staged_files)?;
@@ -245,9 +221,9 @@ pub fn rewrite_authorship_after_rebase_v2(
         .await
     })?;
 
-    // Clone the original VA to use as a fallback for restoring attributions
+    // Clone the original VA to use for restoring attributions when content reappears
     // This handles commit splitting where content from original_head gets re-applied
-    let original_va_for_fallback = {
+    let original_head_state_va = {
         let mut attrs = HashMap::new();
         let mut contents = HashMap::new();
         for file in current_va.files() {
@@ -327,11 +303,11 @@ pub fn rewrite_authorship_after_rebase_v2(
         }
 
         // Transform attributions based on the new content state
-        // Pass original VA to restore attributions for content that existed originally
+        // Pass original_head state to restore attributions for content that existed before rebase
         current_va = transform_attributions_to_final_state(
             &current_va,
             new_content_state.clone(),
-            Some(&original_va_for_fallback),
+            Some(&original_head_state_va),
         )?;
 
         // Convert to AuthorshipLog, but filter to only files that exist in this commit
@@ -432,9 +408,9 @@ pub fn rewrite_authorship_after_cherry_pick(
         .await
     })?;
 
-    // Clone the source VA to use as a fallback for restoring attributions
+    // Clone the source VA to use for restoring attributions when content reappears
     // This handles commit splitting where content from source gets re-applied
-    let source_va_for_fallback = {
+    let source_head_state_va = {
         let mut attrs = HashMap::new();
         let mut contents = HashMap::new();
         for file in current_va.files() {
@@ -514,11 +490,11 @@ pub fn rewrite_authorship_after_cherry_pick(
         }
 
         // Transform attributions based on the new content state
-        // Pass source VA to restore attributions for content that existed in source
+        // Pass source_head state to restore attributions for content that existed before cherry-pick
         current_va = transform_attributions_to_final_state(
             &current_va,
             new_content_state.clone(),
-            Some(&source_va_for_fallback),
+            Some(&source_head_state_va),
         )?;
 
         // Convert to AuthorshipLog, but filter to only files that exist in this commit
@@ -586,7 +562,6 @@ fn copy_authorship_log(repo: &Repository, from_sha: &str, to_sha: &str) -> Resul
 }
 
 /// Get file contents from a commit tree for specified pathspecs
-#[allow(dead_code)]
 fn get_committed_files_content(
     repo: &Repository,
     commit_sha: &str,
@@ -709,74 +684,6 @@ pub fn rewrite_authorship_after_commit_amend(
     Ok(authorship_log)
 }
 
-// Build a path of commit SHAs from head_sha to the origin base
-///
-/// This function walks the commit history from head_sha backwards until it reaches
-/// the origin_base, collecting all commit SHAs in the path. If no valid linear path
-/// exists (incompatible lineage), it returns an error.
-///
-/// # Arguments
-/// * `repo` - Git repository
-/// * `head_sha` - SHA of the HEAD commit to start from
-/// * `origin_base` - SHA of the origin base commit to walk to
-///
-/// # Returns
-/// A vector of commit SHAs in chronological order (oldest first) representing
-/// the path from just after origin_base to head_sha
-#[allow(dead_code)]
-pub fn build_commit_path_to_base(
-    repo: &Repository,
-    head_sha: &str,
-    origin_base: &str,
-) -> Result<Vec<String>, GitAiError> {
-    let head_commit = repo.find_commit(head_sha.to_string())?;
-
-    let mut commits = Vec::new();
-    let mut current_commit = head_commit;
-
-    // Walk backwards from head to origin_base
-    loop {
-        // If we've reached the origin base, we're done
-        if current_commit.id() == origin_base.to_string() {
-            break;
-        }
-
-        // Add current commit to our path
-        commits.push(current_commit.id().to_string());
-
-        // Move to parent commit
-        match current_commit.parent(0) {
-            Ok(parent) => current_commit = parent,
-            Err(_) => {
-                return Err(GitAiError::Generic(format!(
-                    "Incompatible lineage: no path from {} to {}. Reached end of history without finding origin base.",
-                    head_sha, origin_base
-                )));
-            }
-        }
-
-        // Safety check: avoid infinite loops in case of circular references
-        if commits.len() > 10000 {
-            return Err(GitAiError::Generic(
-                "Incompatible lineage: path too long, possible circular reference".to_string(),
-            ));
-        }
-    }
-
-    // If we have no commits, head_sha and origin_base are the same
-    if commits.is_empty() {
-        return Err(GitAiError::Generic(format!(
-            "Incompatible lineage: head_sha ({}) and origin_base ({}) are the same commit",
-            head_sha, origin_base
-        )));
-    }
-
-    // Reverse to get chronological order (oldest first)
-    commits.reverse();
-
-    Ok(commits)
-}
-
 pub fn walk_commits_to_base(
     repository: &Repository,
     head: &str,
@@ -795,28 +702,12 @@ pub fn walk_commits_to_base(
 }
 
 /// Get all file paths changed between two commits
-#[allow(dead_code)]
 fn get_files_changed_between_commits(
     repo: &Repository,
     from_commit: &str,
     to_commit: &str,
 ) -> Result<Vec<String>, GitAiError> {
-    let mut args = repo.global_args_for_exec();
-    args.push("diff".to_string());
-    args.push("--name-only".to_string());
-    args.push(from_commit.to_string());
-    args.push(to_commit.to_string());
-
-    let output = crate::git::repository::exec_git(&args)?;
-    let stdout = String::from_utf8(output.stdout)?;
-
-    let files: Vec<String> = stdout
-        .lines()
-        .filter(|line| !line.is_empty())
-        .map(|line| line.to_string())
-        .collect();
-
-    Ok(files)
+    repo.diff_changed_files(from_commit, to_commit)
 }
 
 /// Reconstruct working log after a reset that preserves working directory
@@ -827,7 +718,6 @@ fn get_files_changed_between_commits(
 ///
 /// Uses VirtualAttributions to merge AI authorship from old_head (with working log) and
 /// target_commit, generating INITIAL checkpoints that seed the AI state on target_commit.
-#[allow(dead_code)]
 pub fn reconstruct_working_log_after_reset(
     repo: &Repository,
     target_commit_sha: &str, // Where we reset TO
@@ -985,7 +875,6 @@ pub fn reconstruct_working_log_after_reset(
 }
 
 /// Get all file paths modified across a list of commits
-#[allow(dead_code)]
 fn get_pathspecs_from_commits(
     repo: &Repository,
     commits: &[String],
@@ -1005,7 +894,7 @@ fn get_pathspecs_from_commits(
 fn transform_attributions_to_final_state(
     source_va: &crate::authorship::virtual_attribution::VirtualAttributions,
     final_state: HashMap<String, String>,
-    fallback_va: Option<&crate::authorship::virtual_attribution::VirtualAttributions>,
+    original_head_state: Option<&crate::authorship::virtual_attribution::VirtualAttributions>,
 ) -> Result<crate::authorship::virtual_attribution::VirtualAttributions, GitAiError> {
     use crate::authorship::attribution_tracker::AttributionTracker;
     use crate::authorship::virtual_attribution::VirtualAttributions;
@@ -1059,36 +948,37 @@ fn transform_attributions_to_final_state(
             Vec::new()
         };
 
-        // Try to restore attributions from fallback VA for "new" content that existed originally
-        if let Some(fallback) = fallback_va {
-            if let Some(fallback_content) = fallback.get_file_content(&file_path) {
-                if fallback_content == &final_content {
+        // Try to restore attributions from original_head_state for "new" content that existed before rebase
+        // This handles commit splitting where content from original_head gets re-applied
+        if let Some(original_state) = original_head_state {
+            if let Some(original_content) = original_state.get_file_content(&file_path) {
+                if original_content == &final_content {
                     // The final content matches the original content exactly!
                     // Use the original attributions
-                    if let Some(fallback_attrs) = fallback.get_char_attributions(&file_path) {
-                        transformed_attrs = fallback_attrs.clone();
+                    if let Some(original_attrs) = original_state.get_char_attributions(&file_path) {
+                        transformed_attrs = original_attrs.clone();
                     }
                 } else {
                     // Content doesn't match exactly, but we can still try to restore attributions
-                    // for matching substrings (handles commit splitting)
+                    // for matching substrings (handles commit splitting with edits)
                     let dummy_author = "__DUMMY__";
                     for attr in &mut transformed_attrs {
                         if attr.author_id == dummy_author {
-                            // This is new content - check if it exists in fallback
+                            // This is new content - check if it exists in original state
                             let new_text =
                                 &final_content[attr.start..attr.end.min(final_content.len())];
 
-                            // Search for this text in the fallback content
-                            if let Some(pos) = fallback_content.find(new_text) {
+                            // Search for this text in the original content
+                            if let Some(pos) = original_content.find(new_text) {
                                 // Found matching text in original - check if we have attribution for it
-                                if let Some(fallback_attrs) =
-                                    fallback.get_char_attributions(&file_path)
+                                if let Some(original_attrs) =
+                                    original_state.get_char_attributions(&file_path)
                                 {
-                                    for fallback_attr in fallback_attrs {
-                                        // Check if this fallback attribution covers the matched position
-                                        if fallback_attr.start <= pos && pos < fallback_attr.end {
+                                    for original_attr in original_attrs {
+                                        // Check if this original attribution covers the matched position
+                                        if original_attr.start <= pos && pos < original_attr.end {
                                             // Restore the original author
-                                            attr.author_id = fallback_attr.author_id.clone();
+                                            attr.author_id = original_attr.author_id.clone();
                                             break;
                                         }
                                     }
