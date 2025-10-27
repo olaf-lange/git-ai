@@ -1,10 +1,23 @@
+use crate::authorship::attribution_tracker::LineAttribution;
+use crate::authorship::authorship_log::PromptRecord;
 use crate::authorship::working_log::{CHECKPOINT_API_VERSION, Checkpoint};
 use crate::error::GitAiError;
 use crate::git::rewrite_log::{RewriteLogEvent, append_event_to_file};
 use crate::utils::debug_log;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// Initial attributions data structure stored in the INITIAL file
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct InitialAttributions {
+    /// Map of file path to line attributions
+    pub files: HashMap<String, Vec<LineAttribution>>,
+    /// Map of author_id (hash) to PromptRecord for prompt tracking
+    pub prompts: HashMap<String, PromptRecord>,
+}
 
 #[derive(Debug, Clone)]
 pub struct RepoStorage {
@@ -203,6 +216,70 @@ impl PersistedWorkingLog {
         }
 
         Ok(checkpoints)
+    }
+
+    /* INITIAL attributions file */
+
+    /// Write initial attributions to the INITIAL file.
+    /// This seeds the working log with known attributions from rewrite operations.
+    /// Only writes files that have non-empty attributions.
+    #[allow(dead_code)]
+    pub fn write_initial_attributions(
+        &self,
+        attributions: HashMap<String, Vec<LineAttribution>>,
+        prompts: HashMap<String, PromptRecord>,
+    ) -> Result<(), GitAiError> {
+        // Filter out empty attributions
+        let filtered: HashMap<String, Vec<LineAttribution>> = attributions
+            .into_iter()
+            .filter(|(_, attrs)| !attrs.is_empty())
+            .collect();
+
+        if filtered.is_empty() {
+            // Don't create an INITIAL file if there are no attributions
+            return Ok(());
+        }
+
+        let initial_data = InitialAttributions {
+            files: filtered,
+            prompts,
+        };
+
+        let initial_file = self.dir.join("INITIAL");
+        let json = serde_json::to_string_pretty(&initial_data)?;
+        fs::write(initial_file, json)?;
+
+        Ok(())
+    }
+
+    /// Read initial attributions from the INITIAL file.
+    /// Returns empty attributions and prompts if the file doesn't exist.
+    pub fn read_initial_attributions(&self) -> InitialAttributions {
+        let initial_file = self.dir.join("INITIAL");
+
+        if !initial_file.exists() {
+            return InitialAttributions::default();
+        }
+
+        match fs::read_to_string(&initial_file) {
+            Ok(content) => match serde_json::from_str(&content) {
+                Ok(initial_data) => initial_data,
+                Err(e) => {
+                    debug_log(&format!(
+                        "Failed to parse INITIAL file: {}. Returning empty.",
+                        e
+                    ));
+                    InitialAttributions::default()
+                }
+            },
+            Err(e) => {
+                debug_log(&format!(
+                    "Failed to read INITIAL file: {}. Returning empty.",
+                    e
+                ));
+                InitialAttributions::default()
+            }
+        }
     }
 }
 

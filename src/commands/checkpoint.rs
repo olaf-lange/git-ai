@@ -201,6 +201,9 @@ pub fn run(
     }
     let combined_hash = format!("{:x}", combined_hasher.finalize());
 
+    // Note: foreign prompts from INITIAL file are read in post_commit.rs
+    // when converting working log -> authorship log
+
     let timer = Timer::default();
     // If this is not the first checkpoint, diff against the last saved state
     let end_entries_clock = Timer::default().start_quiet("checkpoint: compute entries");
@@ -211,6 +214,7 @@ pub fn run(
         let result = smol::block_on(get_initial_checkpoint_entries(
             kind,
             repo,
+            &working_log,
             &files,
             &base_commit,
             &file_content_hashes,
@@ -428,12 +432,17 @@ fn save_current_file_states(
 async fn get_initial_checkpoint_entries(
     kind: CheckpointKind,
     repo: &Repository,
+    working_log: &PersistedWorkingLog,
     files: &[String],
     _base_commit: &str,
     file_content_hashes: &HashMap<String, String>,
     agent_run_result: Option<&AgentRunResult>,
     ts: u128,
 ) -> Result<Vec<WorkingLogEntry>, GitAiError> {
+    // Read INITIAL attributions from working log (empty if file doesn't exist)
+    let initial_data = working_log.read_initial_attributions();
+    let initial_attributions = initial_data.files;
+
     // Determine author_id based on checkpoint kind and agent_id
     let author_id = if kind != CheckpointKind::Human {
         // For AI checkpoints, use session hash
@@ -482,6 +491,12 @@ async fn get_initial_checkpoint_entries(
             .unwrap_or_default();
         let semaphore = Arc::clone(&semaphore);
 
+        // Get INITIAL attributions for this file (if any)
+        let initial_attrs_for_file = initial_attributions
+            .get(&file_path)
+            .cloned()
+            .unwrap_or_default();
+
         let task = smol::spawn(async move {
             // Acquire semaphore permit to limit concurrency
             let _permit = semaphore.acquire().await;
@@ -517,9 +532,19 @@ async fn get_initial_checkpoint_entries(
                 let current_content =
                     std::fs::read_to_string(&abs_path).unwrap_or_else(|_| String::new());
 
-                if current_content == previous_content {
+                // Skip if no changes, UNLESS we have INITIAL attributions for this file
+                // (in which case we need to create an entry to record those attributions)
+                if current_content == previous_content && initial_attrs_for_file.is_empty() {
                     // No changes, no need to add entries
                     return Ok(None);
+                }
+
+                // Build a set of lines covered by INITIAL attributions for this file
+                let mut initial_covered_lines: HashSet<u32> = HashSet::new();
+                for attr in &initial_attrs_for_file {
+                    for line in attr.start_line..=attr.end_line {
+                        initial_covered_lines.insert(line);
+                    }
                 }
 
                 // Get the previous line attributions from ai blame
@@ -529,37 +554,99 @@ async fn get_initial_checkpoint_entries(
                 ai_blame_opts.use_prompt_hashes_as_names = true;
                 ai_blame_opts.newest_commit = head_commit_sha.clone();
                 let ai_blame = repo.blame(&file_path, &ai_blame_opts);
-                let mut prev_line_attributions = Vec::new();
+
+                // Start with INITIAL attributions (they win)
+                let mut prev_line_attributions = initial_attrs_for_file.clone();
+
+                // Add blame results for lines NOT covered by INITIAL
+                let mut blamed_lines: HashSet<u32> = HashSet::new();
                 if let Ok((blames, _)) = ai_blame {
                     for (line, author) in blames {
-                        if author == CheckpointKind::Human.to_str() {
+                        blamed_lines.insert(line);
+                        // Skip if INITIAL already has this line
+                        if initial_covered_lines.contains(&line) {
                             continue;
                         }
+
+                        // Skip human-authored lines - for AI checkpoints, attribute them to the current session instead
+                        if author == CheckpointKind::Human.to_str() {
+                            if kind != CheckpointKind::Human {
+                                // For AI checkpoints, attribute uncovered lines to the current AI session
+                                prev_line_attributions.push(
+                                    crate::authorship::attribution_tracker::LineAttribution {
+                                        start_line: line,
+                                        end_line: line,
+                                        author_id: author_id.clone(),
+                                        overridden: false,
+                                    },
+                                );
+                            }
+                            continue;
+                        }
+
                         prev_line_attributions.push(
                             crate::authorship::attribution_tracker::LineAttribution {
                                 start_line: line,
                                 end_line: line,
                                 author_id: author.clone(),
-                                overridden: false, // TODO Update authorship to store overridden state for line ranges
+                                overridden: false,
                             },
                         );
                     }
                 }
+
+                // For AI checkpoints, attribute any lines NOT in INITIAL and NOT returned by ai_blame
+                if kind != CheckpointKind::Human {
+                    let total_lines = current_content.lines().count() as u32;
+                    for line_num in 1..=total_lines {
+                        if !initial_covered_lines.contains(&line_num)
+                            && !blamed_lines.contains(&line_num)
+                        {
+                            prev_line_attributions.push(
+                                crate::authorship::attribution_tracker::LineAttribution {
+                                    start_line: line_num,
+                                    end_line: line_num,
+                                    author_id: author_id.clone(),
+                                    overridden: false,
+                                },
+                            );
+                        }
+                    }
+                }
+
+                // For INITIAL attributions, we need to use current_content (not previous_content)
+                // because INITIAL line numbers refer to the current state of the file
+                let content_for_line_conversion = if !initial_attrs_for_file.is_empty() {
+                    &current_content
+                } else {
+                    &previous_content
+                };
+
                 // Convert any line attributions to character attributions
                 let prev_attributions =
                     crate::authorship::attribution_tracker::line_attributions_to_attributions(
                         &prev_line_attributions,
-                        &previous_content,
+                        content_for_line_conversion,
                         ts,
                     );
+
+                // When we have INITIAL attributions, they describe the current state of the file.
+                // We need to pass current_content as previous_content so the attributions are preserved.
+                // The tracker will see no changes and preserve the INITIAL attributions.
+                let (prev_content_for_entry, curr_content_for_entry) =
+                    if !initial_attrs_for_file.is_empty() {
+                        (&current_content, &current_content)
+                    } else {
+                        (&previous_content, &current_content)
+                    };
 
                 let entry = make_entry_for_file(
                     &file_path,
                     &blob_sha,
                     &author_id,
-                    &previous_content,
+                    prev_content_for_entry,
                     &prev_attributions,
-                    &current_content,
+                    curr_content_for_entry,
                     ts,
                 )?;
 

@@ -39,16 +39,44 @@ pub fn post_commit(
     // mutates inline
     CursorPreset::update_cursor_conversations_to_latest(&mut filtered_working_log)?;
 
+    // Read foreign prompts from INITIAL file
+    let initial_data = working_log.read_initial_attributions();
+    let foreign_prompts = if !initial_data.prompts.is_empty() {
+        Some(&initial_data.prompts)
+    } else {
+        None
+    };
+
     // --- NEW: Serialize authorship log and store it in notes/ai/{commit_sha} ---
     let mut authorship_log = AuthorshipLog::from_working_log_with_base_commit_and_human_author(
         &filtered_working_log,
         &parent_sha,
         Some(&human_author),
+        Some(&working_log),
+        foreign_prompts,
     );
 
     // Filter the authorship log to only include committed lines
     // We need to keep ONLY lines that are in the commit, not filter out unstaged lines
-    let committed_hunks = collect_committed_hunks(repo, &parent_sha, &commit_sha, None)?;
+    let mut committed_hunks = collect_committed_hunks(repo, &parent_sha, &commit_sha, None)?;
+
+    // If we have INITIAL attributions, we need to include ALL lines from those files in committed_hunks
+    // because INITIAL attributions refer to existing lines, not just added lines
+    if !initial_data.files.is_empty() {
+        for (file_path, _) in &initial_data.files {
+            // Get the full content of the file in the commit
+            if let Ok(content_bytes) = repo.get_file_content(file_path, &commit_sha) {
+                if let Ok(content) = String::from_utf8(content_bytes) {
+                    let line_count = content.lines().count() as u32;
+                    if line_count > 0 {
+                        // Add all lines from 1 to line_count
+                        committed_hunks
+                            .insert(file_path.clone(), vec![LineRange::Range(1, line_count)]);
+                    }
+                }
+            }
+        }
+    }
 
     // Convert authorship log line numbers from working directory coordinates to commit coordinates
     // The working log uses working directory coordinates (which includes unstaged changes),
