@@ -442,21 +442,12 @@ impl AuthorshipLog {
         base_commit_sha: &str,
         human_author: Option<&str>,
         working_log: Option<&crate::git::repo_storage::PersistedWorkingLog>,
-        foreign_prompts: Option<&HashMap<String, PromptRecord>>,
     ) -> Self {
         let mut authorship_log = Self::new();
         authorship_log.metadata.base_commit_sha = base_commit_sha.to_string();
 
-        // Load foreign prompts (from INITIAL file passed in)
-        if let Some(prompts) = foreign_prompts {
-            for (author_id, prompt_record) in prompts {
-                authorship_log
-                    .metadata
-                    .prompts
-                    .insert(author_id.clone(), prompt_record.clone());
-            }
-        } else if let Some(wl) = working_log {
-            // Fallback: read from INITIAL file directly if not passed in
+        // Load prompts from working log if available
+        if let Some(wl) = working_log {
             let initial_data = wl.read_initial_attributions();
             for (author_id, prompt_record) in initial_data.prompts {
                 authorship_log
@@ -1387,7 +1378,6 @@ mod tests {
             "base123",
             None,
             None,
-            None,
         );
 
         // Get the prompt record
@@ -1561,7 +1551,6 @@ mod tests {
             &[checkpoint1, checkpoint2],
             "base123",
             Some("human@example.com"),
-            None,
             None,
         );
 
