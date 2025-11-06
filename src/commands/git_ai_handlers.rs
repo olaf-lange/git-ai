@@ -120,7 +120,9 @@ fn print_help() {
     eprintln!("  ci                 Continuous integration utilities");
     eprintln!("    github                 GitHub CI helpers");
     eprintln!("  squash-authorship  Generate authorship log for squashed commits");
-    eprintln!("    <base_branch> <new_sha> <old_sha>  Required: base branch, new commit SHA, old commit SHA");
+    eprintln!(
+        "    <base_branch> <new_sha> <old_sha>  Required: base branch, new commit SHA, old commit SHA"
+    );
     eprintln!("    --dry-run             Show what would be done without making changes");
     eprintln!("  git-path           Print the path to the underlying git executable");
     eprintln!("  version, -v, --version     Print the git-ai version");
@@ -479,7 +481,7 @@ fn handle_stats(args: &[String]) {
 
     // Handle commit range if detected
     if let Some(range) = commit_range {
-        match range_authorship::range_authorship(range, true) {
+        match range_authorship::range_authorship(range, false) {
             Ok(stats) => {
                 if json_output {
                     let json_str = serde_json::to_string(&stats).unwrap();
