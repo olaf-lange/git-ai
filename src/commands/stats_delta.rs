@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
-use crate::authorship::stats::CommitStats;
+use crate::authorship::stats::{CommitStats, stats_for_commit_stats};
 use crate::git::refs::get_authorship;
 use crate::git::repository::{Repository, exec_git};
 
@@ -111,10 +111,15 @@ pub fn handle_stats_delta(repository_option: &Option<Repository>, _args: &[Strin
                 // Remove any Editing entry for this parent SHA (consolidation)
                 stats_delta_log.delete(&parent_sha);
 
+                let stats = stats_for_commit_stats(repository, &commit_sha).unwrap_or_else(|e| {
+                    eprintln!("Failed to compute stats for commit {}: {}", commit_sha, e);
+                    CommitStats::default()
+                });
+
                 let entry = StatsDeltaLogEntry::LandedGitAIPostCommit {
                     working_log_base_sha: parent_sha,
                     commit_sha: commit_sha.clone(),
-                    stats: CommitStats::default(),
+                    stats,
                     processed_at: Utc::now(),
                 };
 
@@ -135,10 +140,19 @@ pub fn handle_stats_delta(repository_option: &Option<Repository>, _args: &[Strin
                         // Remove any Editing entry for this parent SHA (consolidation)
                         stats_delta_log.delete(&parent_sha);
 
+                        let stats =
+                            stats_for_commit_stats(repository, &commit_sha).unwrap_or_else(|e| {
+                                eprintln!(
+                                    "Failed to compute stats for commit {}: {}",
+                                    commit_sha, e
+                                );
+                                CommitStats::default()
+                            });
+
                         // This commit has a working log parent - mark as heuristic
                         let entry = StatsDeltaLogEntry::LandedCommitHueristic {
                             working_log_base_sha: parent_sha,
-                            stats: CommitStats::default(),
+                            stats,
                             processed_at: Utc::now(),
                         };
 

@@ -94,7 +94,7 @@ pub fn stats_command(
         target, refname
     );
 
-    let stats = stats_for_commit_stats(repo, &target, &refname)?;
+    let stats = stats_for_commit_stats(repo, &target)?;
 
     if json {
         let json_str = serde_json::to_string(&stats)?;
@@ -558,7 +558,6 @@ pub fn stats_from_authorship_log(
 pub fn stats_for_commit_stats(
     repo: &Repository,
     commit_sha: &str,
-    _refname: &str,
 ) -> Result<CommitStats, GitAiError> {
     // Step 1: get the diff between this commit and its parent ON refname (if more than one parent)
     // If initial than everything is additions
@@ -879,7 +878,7 @@ mod tests {
         let head_sha = tmp_repo.get_head_commit_sha().unwrap();
 
         // Test our stats function
-        let stats = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, "HEAD").unwrap();
+        let stats = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha).unwrap();
 
         // Verify the stats
         assert_eq!(
@@ -931,7 +930,7 @@ mod tests {
         tmp_repo.commit_with_message("Mixed commit").unwrap();
 
         let head_sha = tmp_repo.get_head_commit_sha().unwrap();
-        let stats = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, "HEAD").unwrap();
+        let stats = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha).unwrap();
 
         // Verify the stats
         assert_eq!(stats.human_additions, 2, "Human added 2 lines");
@@ -962,7 +961,7 @@ mod tests {
         tmp_repo.commit_with_message("Initial commit").unwrap();
 
         let head_sha = tmp_repo.get_head_commit_sha().unwrap();
-        let stats = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, "HEAD").unwrap();
+        let stats = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha).unwrap();
 
         // For initial commit, everything should be additions
         assert_eq!(
