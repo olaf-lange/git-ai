@@ -173,8 +173,8 @@ pub fn handle_stats_delta(repository_option: &Option<Repository>, _args: &[Strin
     // Step 5: Update tracking metadata
     stats_delta_log.set_last_indexed_commit(head_sha);
 
-    // Step 6: Save the log
-    if let Err(e) = stats_delta_log.save() {
+    // Step 6: Save and clean the log
+    if let Err(e) = stats_delta_log.save_and_clean(repository) {
         eprintln!("Failed to save stats_delta log: {}", e);
         std::process::exit(1);
     }
@@ -351,6 +351,61 @@ impl StatsDeltaLog {
         Ok(())
     }
 
+    /// Save the log to disk and clean up old entries (keeps max 200 items, FIFO)
+    ///
+    /// For each deleted item:
+    /// - LandedCommitHueristic: delete the working log
+    /// - LandedGitAIPostCommit: no side effects
+    /// - Editing: if last_seen > 5 days ago, delete the working log
+    pub fn save_and_clean(&mut self, repository: &Repository) -> Result<(), std::io::Error> {
+        const MAX_ENTRIES: usize = 200;
+        const EDITING_STALE_DAYS: i64 = 5;
+
+        if self.entries.len() > MAX_ENTRIES {
+            // FIFO: oldest entries are at the beginning (lowest indices)
+            let num_to_delete = self.entries.len() - MAX_ENTRIES;
+
+            // Collect the entries we're about to delete for cleanup
+            let deleted_entries: Vec<StatsDeltaLogEntry> =
+                self.entries.drain(0..num_to_delete).collect();
+
+            // Perform cleanup operations on deleted entries
+            let now = Utc::now();
+            for entry in deleted_entries {
+                match entry {
+                    StatsDeltaLogEntry::LandedCommitHueristic {
+                        working_log_base_sha,
+                        ..
+                    } => {
+                        // Delete working log for heuristic entries
+                        let _ = repository
+                            .storage
+                            .delete_working_log_for_base_commit(&working_log_base_sha);
+                    }
+                    StatsDeltaLogEntry::LandedGitAIPostCommit { .. } => {
+                        // No side effects for GitAI post-commit entries
+                    }
+                    StatsDeltaLogEntry::Editing {
+                        working_log_base_sha,
+                        last_seen,
+                        ..
+                    } => {
+                        // Delete working log if last_seen > 5 days ago
+                        let age = now.signed_duration_since(last_seen);
+                        if age.num_days() > EDITING_STALE_DAYS {
+                            let _ = repository
+                                .storage
+                                .delete_working_log_for_base_commit(&working_log_base_sha);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Save the log
+        self.save()
+    }
+
     /// Get the last indexed commit SHA
     pub fn last_indexed_commit(&self) -> Option<&str> {
         self.last_indexed_commit.as_deref()
@@ -523,21 +578,4 @@ fn simulate_post_commit(
         git_diff_added_lines,
         git_diff_deleted_lines,
     ))
-}
-
-mod tests {
-    use crate::git::find_repository_in_path;
-
-    use super::*;
-
-    #[test]
-    fn test_simulate_post_commit() {
-        let repository = find_repository_in_path(".").unwrap();
-        let working_log_base_sha = "f5c36331b7979ac2e913fbf44372122ec248500d";
-        let commit_sha = "f5c36331b7979ac2e913fbf44372122ec248500d";
-
-        // Ai example
-        let stats = simulate_post_commit(&repository, working_log_base_sha, commit_sha).unwrap();
-        println!("stats: {:?}", stats);
-    }
 }
