@@ -14,6 +14,15 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Per-file line statistics (in-memory only, not persisted)
+#[derive(Debug, Clone, Default)]
+struct FileLineStats {
+    additions: u32,
+    deletions: u32,
+    additions_sloc: u32,
+    deletions_sloc: u32,
+}
+
 pub fn run(
     repo: &Repository,
     author: &str,
@@ -213,7 +222,7 @@ pub fn run(
     // when converting working log -> authorship log
 
     // Get checkpoint entries using unified function that handles both initial and subsequent checkpoints
-    let entries = smol::block_on(get_checkpoint_entries(
+    let (entries, file_stats) = smol::block_on(get_checkpoint_entries(
         kind,
         repo,
         &working_log,
@@ -233,9 +242,8 @@ pub fn run(
             entries.clone(),
         );
 
-        // Compute and set line stats
-        checkpoint.line_stats =
-            compute_line_stats(repo, &working_log, &files, &entries, &checkpoints, kind)?;
+        // Aggregate line stats from in-memory stats (computed during entry creation)
+        checkpoint.line_stats = compute_line_stats(&file_stats)?;
 
         // Set transcript and agent_id if provided and not a human checkpoint
         if kind != CheckpointKind::Human
@@ -459,7 +467,7 @@ fn get_checkpoint_entry_for_file(
     head_tree_id: Arc<Option<String>>,
     initial_attributions: Arc<HashMap<String, Vec<LineAttribution>>>,
     ts: u128,
-) -> Result<Option<WorkingLogEntry>, GitAiError> {
+) -> Result<Option<(WorkingLogEntry, FileLineStats)>, GitAiError> {
     let current_content = working_log
         .read_current_file_content(&file_path)
         .unwrap_or_default();
@@ -614,7 +622,7 @@ fn get_checkpoint_entry_for_file(
         return Ok(None);
     }
 
-    let entry = make_entry_for_file(
+    let (entry, stats) = make_entry_for_file(
         &file_path,
         &file_content_hash,
         author_id.as_ref(),
@@ -623,8 +631,7 @@ fn get_checkpoint_entry_for_file(
         &current_content,
         ts,
     )?;
-
-    Ok(Some(entry))
+    Ok(Some((entry, stats)))
 }
 
 async fn get_checkpoint_entries(
@@ -636,7 +643,7 @@ async fn get_checkpoint_entries(
     previous_checkpoints: &[Checkpoint],
     agent_run_result: Option<&AgentRunResult>,
     ts: u128,
-) -> Result<Vec<WorkingLogEntry>, GitAiError> {
+) -> Result<(Vec<WorkingLogEntry>, Vec<FileLineStats>), GitAiError> {
     // Read INITIAL attributions from working log (empty if file doesn't exist)
     let initial_data = working_log.read_initial_attributions();
     let initial_attributions = initial_data.files;
@@ -733,15 +740,19 @@ async fn get_checkpoint_entries(
 
     // Process results
     let mut entries = Vec::new();
+    let mut file_stats = Vec::new();
     for result in results {
         match result {
-            Ok(Some(entry)) => entries.push(entry),
+            Ok(Some((entry, stats))) => {
+                entries.push(entry);
+                file_stats.push(stats);
+            }
             Ok(None) => {} // File had no changes
             Err(e) => return Err(e),
         }
     }
 
-    Ok(entries)
+    Ok((entries, file_stats))
 }
 
 fn make_entry_for_file(
@@ -752,7 +763,7 @@ fn make_entry_for_file(
     previous_attributions: &Vec<Attribution>,
     content: &str,
     ts: u128,
-) -> Result<WorkingLogEntry, GitAiError> {
+) -> Result<(WorkingLogEntry, FileLineStats), GitAiError> {
     let tracker = AttributionTracker::new();
     let filled_in_prev_attributions = tracker.attribute_unattributed_ranges(
         previous_content,
@@ -774,109 +785,67 @@ fn make_entry_for_file(
             &new_attributions,
             content,
         );
-    Ok(WorkingLogEntry::new(
+
+    // Compute line stats while we already have both contents in memory
+    let line_stats = compute_file_line_stats(previous_content, content);
+
+    let entry = WorkingLogEntry::new(
         file_path.to_string(),
         blob_sha.to_string(),
         new_attributions,
         line_attributions,
-    ))
+    );
+
+    Ok((entry, line_stats))
 }
 
-/// Compute line statistics by diffing files against their previous versions
+/// Compute line statistics for a single file by diffing previous and current content
+fn compute_file_line_stats(previous_content: &str, current_content: &str) -> FileLineStats {
+    let mut stats = FileLineStats::default();
+
+    // Use TextDiff to count line changes
+    let diff = TextDiff::from_lines(previous_content, current_content);
+    for change in diff.iter_all_changes() {
+        match change.tag() {
+            ChangeTag::Insert => {
+                let non_whitespace_lines = change
+                    .value()
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .count() as u32;
+                stats.additions += change.value().lines().count() as u32;
+                stats.additions_sloc += non_whitespace_lines;
+            }
+            ChangeTag::Delete => {
+                let non_whitespace_lines = change
+                    .value()
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .count() as u32;
+                stats.deletions += change.value().lines().count() as u32;
+                stats.deletions_sloc += non_whitespace_lines;
+            }
+            ChangeTag::Equal => {}
+        }
+    }
+
+    stats
+}
+
+/// Aggregate line statistics from individual file stats
+/// This avoids redundant diff computation since stats are already computed during entry creation
 fn compute_line_stats(
-    repo: &Repository,
-    working_log: &PersistedWorkingLog,
-    files: &[String],
-    _entries: &[WorkingLogEntry],
-    previous_checkpoints: &[Checkpoint],
-    _kind: CheckpointKind,
+    file_stats: &[FileLineStats],
 ) -> Result<crate::authorship::working_log::CheckpointLineStats, GitAiError> {
     let mut stats = crate::authorship::working_log::CheckpointLineStats::default();
 
-    // Build a map of file path -> most recent (blob_sha, line_attributions)
-    let mut previous_file_state: HashMap<String, (String, Vec<LineAttribution>)> = HashMap::new();
-    for checkpoint in previous_checkpoints {
-        for entry in &checkpoint.entries {
-            previous_file_state.insert(
-                entry.file.clone(),
-                (entry.blob_sha.clone(), entry.line_attributions.clone()),
-            );
-        }
+    // Aggregate line stats from all files
+    for file_stat in file_stats {
+        stats.additions += file_stat.additions;
+        stats.deletions += file_stat.deletions;
+        stats.additions_sloc += file_stat.additions_sloc;
+        stats.deletions_sloc += file_stat.deletions_sloc;
     }
-
-    // Count added/deleted lines for each file in this checkpoint
-    let mut total_additions = 0u32;
-    let mut total_deletions = 0u32;
-    let mut total_additions_sloc = 0u32;
-    let mut total_deletions_sloc = 0u32;
-
-    // good candidate for parallelization
-    for file_path in files {
-        let current_content = working_log
-            .read_current_file_content(file_path)
-            .unwrap_or_else(|_| String::new());
-
-        // Get previous content
-        let previous_content = if let Some((prev_hash, _)) = previous_file_state.get(file_path) {
-            working_log.get_file_version(prev_hash).unwrap_or_default()
-        } else {
-            // No previous version, try to get from HEAD
-            let head_commit = repo
-                .head()
-                .ok()
-                .and_then(|h| h.target().ok())
-                .and_then(|oid| repo.find_commit(oid).ok());
-            let head_tree = head_commit.as_ref().and_then(|c| c.tree().ok());
-
-            if let Some(tree) = head_tree {
-                match tree.get_path(std::path::Path::new(file_path)) {
-                    Ok(entry) => {
-                        if let Ok(blob) = repo.find_blob(entry.id()) {
-                            let blob_content = blob.content().unwrap_or_default();
-                            String::from_utf8_lossy(&blob_content).to_string()
-                        } else {
-                            String::new()
-                        }
-                    }
-                    Err(_) => String::new(),
-                }
-            } else {
-                String::new()
-            }
-        };
-
-        // Use TextDiff to count line changes
-        let diff = TextDiff::from_lines(&previous_content, &current_content);
-
-        for change in diff.iter_all_changes() {
-            match change.tag() {
-                ChangeTag::Insert => {
-                    let non_whitespace_lines = change
-                        .value()
-                        .lines()
-                        .filter(|line| !line.trim().is_empty())
-                        .count() as u32;
-                    total_additions += change.value().lines().count() as u32;
-                    total_additions_sloc += non_whitespace_lines;
-                }
-                ChangeTag::Delete => {
-                    let non_whitespace_lines = change
-                        .value()
-                        .lines()
-                        .filter(|line| !line.trim().is_empty())
-                        .count() as u32;
-                    total_deletions += change.value().lines().count() as u32;
-                    total_deletions_sloc += non_whitespace_lines;
-                }
-                ChangeTag::Equal => {}
-            }
-        }
-    }
-
-    stats.additions = total_additions;
-    stats.deletions = total_deletions;
-    stats.additions_sloc = total_additions_sloc;
-    stats.deletions_sloc = total_deletions_sloc;
 
     Ok(stats)
 }
