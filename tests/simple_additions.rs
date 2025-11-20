@@ -576,3 +576,51 @@ fn test_mock_ai_with_pathspecs() {
         "File2 Human Line".human(),
     ]);
 }
+
+#[test]
+fn test_with_duplicate_lines() {
+    // This test verifies that squash merge correctly preserves AI authorship for duplicate lines
+    let repo = TestRepo::new();
+    let mut file = repo.filename("helpers.rs");
+
+    // Create master branch with first function (human-authored)
+    file.set_contents(lines![
+        "pub fn format_string(s: &str) -> String {",
+        "    s.to_uppercase()",
+        "}",
+    ]);
+    repo.stage_all_and_commit("Add format_string function")
+        .unwrap();
+
+    file = repo.filename("helpers.rs");
+    file.assert_lines_and_blame(lines![
+        "pub fn format_string(s: &str) -> String {".human(),
+        "    s.to_uppercase()".human(),
+        "}".human(),
+    ]);
+
+    // AI adds a second function
+    // The key test: the second `}` on line 6 is AI-authored, but there's already a `}` on line 3
+    file.set_contents(lines![
+        "pub fn format_string(s: &str) -> String {",
+        "    s.to_uppercase()",
+        "}",
+        "pub fn reverse_string(s: &str) -> String {".ai(),
+        "    s.chars().rev().collect()".ai(),
+        "}".ai(), // Duplicate closing brace authored by ai
+    ]);
+
+    let output = repo
+        .stage_all_and_commit("AI adds reverse_string function")
+        .unwrap();
+
+    file = repo.filename("helpers.rs");
+    file.assert_lines_and_blame(lines![
+        "pub fn format_string(s: &str) -> String {".human(),
+        "    s.to_uppercase()".human(),
+        "}".human(),
+        "pub fn reverse_string(s: &str) -> String {".ai(),
+        "    s.chars().rev().collect()".ai(),
+        "}".ai(), // Should be AI
+    ]);
+}
