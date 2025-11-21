@@ -625,3 +625,97 @@ fn test_with_duplicate_lines() {
         "}".human(), // Is human, because of how git diffs work!
     ]);
 }
+
+#[test]
+fn test_ai_deletion_with_human_checkpoint_in_same_commit() {
+    // Regression test for issue #193
+    // When both human and AI checkpoints happen in the same commit,
+    // and AI deletes its own lines, human additions should still be
+    // attributed correctly (not claimed by AI)
+    use std::fs;
+
+    let repo = TestRepo::new();
+    let file_path = repo.path().join("data.txt");
+
+    fs::write(&file_path, "Base Line 1\nBase Line 2\nBase Line 3").unwrap();
+
+    repo.git_ai(&["checkpoint"]).unwrap();
+
+    fs::write(
+        &file_path,
+        "Base Line 1\nBase Line 2\nAI: Line 1\nAI: Line 2\nAI: Line 3\nBase Line 3",
+    )
+    .unwrap();
+
+    // Mark only the AI lines with mock_ai checkpoint
+    repo.git_ai(&["checkpoint", "mock_ai", "data.txt"]).unwrap();
+
+    repo.stage_all_and_commit("Commit 1: AI adds 3 lines")
+        .unwrap();
+
+    // COMMIT 2: Human adds 2 lines, then AI modifies
+    // -------
+    // Step 1: Human adds lines
+    fs::write(
+        &file_path,
+        "Base Line 1\nBase Line 2\nAI: Line 1\nAI: Line 2\nAI: Line 3\nHuman: Line 1\nHuman: Line 2\nBase Line 3",
+    )
+    .unwrap();
+
+    // Human checkpoint
+    repo.git_ai(&["checkpoint"]).unwrap();
+
+    // Step 2: AI deletes one of its own lines and adds 2 new lines
+    fs::write(
+        &file_path,
+        "Base Line 1\nBase Line 2\nAI: Line 1\nAI: Line 3\nHuman: Line 1\nHuman: Line 2\nAI: New Line 1\nAI: New Line 2\nBase Line 3",
+    )
+    .unwrap();
+
+    // AI checkpoint
+    println!(
+        "checkpoint: {}",
+        repo.git_ai(&["checkpoint", "mock_ai", "data.txt"]).unwrap()
+    );
+
+    // Now commit everything together
+    let commit = repo
+        .stage_all_and_commit("Commit 2: Human adds 2, AI deletes 1 and adds 2")
+        .unwrap();
+
+    commit.print_authorship();
+
+    println!("file: {:?}", repo.git_ai(&["blame", "data.txt"]).unwrap());
+
+    // Verify line-by-line attribution
+    let mut file = repo.filename("data.txt");
+    file.assert_lines_and_blame(lines![
+        "Base Line 1".human(),
+        "Base Line 2".human(),
+        "AI: Line 1".ai(),
+        "AI: Line 3".ai(),
+        "Human: Line 1".human(), // Should be human, not AI (Bug #193)
+        "Human: Line 2".human(), // Should be human, not AI (Bug #193)
+        "AI: New Line 1".ai(),
+        "AI: New Line 2".ai(),
+        "Base Line 3".human(),
+    ]);
+
+    // Verify the stats are correct for the last commit
+    let stats_output = repo.git_ai(&["stats", "HEAD", "--json"]).unwrap();
+    let stats_output = stats_output.split("}}}").next().unwrap().to_string() + "}}}";
+    let stats: serde_json::Value = serde_json::from_str(&stats_output).unwrap();
+
+    // Expected: 2 human additions, 2 AI additions
+    // Bug #193 causes: 0 human additions, 4 AI additions
+    assert_eq!(
+        stats["human_additions"].as_u64().unwrap(),
+        2,
+        "Human additions should be 2, not 0 (Bug #193)"
+    );
+    assert_eq!(
+        stats["ai_additions"].as_u64().unwrap(),
+        2,
+        "AI additions should be 2, not 4 (Bug #193)"
+    );
+}
