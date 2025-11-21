@@ -1661,6 +1661,61 @@ impl Repository {
         Ok(files)
     }
 
+    pub fn ensure_ai_notes_refspecs_in_remote_push(
+        &self,
+        remote_name: &str,
+    ) -> Result<(), GitAiError> {
+        let required_refspec = "+refs/notes/ai:refs/notes/ai";
+
+        // Step 1: Verify the remote exists by checking its URL
+        let mut args = self.global_args_for_exec();
+        args.push("config".to_string());
+        args.push("--get".to_string());
+        args.push(format!("remote.{}.url", remote_name));
+
+        exec_git(&args)
+            .map_err(|_| GitAiError::Generic(format!("Remote '{}' does not exist", remote_name)))?;
+
+        // Step 2: Get all push refspecs for this remote
+        let mut args = self.global_args_for_exec();
+        args.push("config".to_string());
+        args.push("--get-all".to_string());
+        args.push(format!("remote.{}.push", remote_name));
+
+        let existing_refspecs = match exec_git(&args) {
+            Ok(output) => {
+                let stdout = String::from_utf8(output.stdout)?;
+                stdout
+                    .lines()
+                    .map(|s| s.trim().to_string())
+                    .collect::<Vec<String>>()
+            }
+            Err(GitAiError::GitCliError { code: Some(1), .. }) => {
+                // No push refspecs configured yet
+                Vec::new()
+            }
+            Err(e) => return Err(e),
+        };
+
+        // Step 3: Check if required_refspec is already present
+        if existing_refspecs
+            .iter()
+            .any(|spec| spec == required_refspec)
+        {
+            return Ok(());
+        }
+
+        // Step 4: Add the required refspec
+        let mut args = self.global_args_for_exec();
+        args.push("config".to_string());
+        args.push("--add".to_string());
+        args.push(format!("remote.{}.push", remote_name));
+        args.push(required_refspec.to_string());
+
+        exec_git(&args)?;
+        Ok(())
+    }
+
     /// Get added line ranges from git diff between a commit and the working directory
     /// Returns a HashMap of file paths to vectors of added line numbers
     ///
