@@ -44,22 +44,18 @@ pub fn push_pre_command_hook(parsed_args: &ParsedGitInvocation, repository: &Rep
         .or_else(|| repository.get_default_remote().ok().flatten());
 
     if let Some(remote) = remote {
-        debug_log(&format!(
-            "started pushing authorship notes to remote: {}",
-            remote
-        ));
-
         crate::observability::spawn_background_flush();
 
         match repository.ensure_ai_notes_refspecs_in_remote_push(&remote) {
             Ok(()) => {
-                debug_log(&format!("ai notes refspecs ensured in remote: {}", remote));
+                debug_log(&format!("ensured ai notes refspecs in remote: {}", remote));
             }
             Err(e) => {
                 debug_log(&format!(
                     "failed to ensure ai notes refspecs in remote: {}",
                     e
                 ));
+                return;
             }
         }
 
