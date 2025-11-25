@@ -193,7 +193,11 @@ fn run_pre_command_hooks(
                     fetch_hooks::fetch_pull_pre_command_hook(parsed_args, repository);
             }
             Some("stash") => {
-                stash_hooks::pre_stash_hook(parsed_args, repository, command_hooks_context);
+                let config = config::Config::get();
+
+                if config.feature_flags().rewrite_stash {
+                    stash_hooks::pre_stash_hook(parsed_args, repository, command_hooks_context);
+                }
             }
             _ => {}
         }
@@ -256,12 +260,16 @@ fn run_post_command_hooks(
                 repository,
             ),
             Some("stash") => {
-                stash_hooks::post_stash_hook(
-                    &command_hooks_context,
-                    parsed_args,
-                    repository,
-                    exit_status,
-                );
+                let config = config::Config::get();
+
+                if config.feature_flags().rewrite_stash {
+                    stash_hooks::post_stash_hook(
+                        &command_hooks_context,
+                        parsed_args,
+                        repository,
+                        exit_status,
+                    );
+                }
             }
             _ => {}
         }

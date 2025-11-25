@@ -3,8 +3,8 @@ use serde::Deserialize;
 /// Feature flags for the application
 #[derive(Debug, Clone)]
 pub struct FeatureFlags {
-    rewrite_stash: bool,
-    proxy_push_notes_with_head: bool,
+    pub rewrite_stash: bool,
+    pub proxy_push_notes_with_head: bool,
 }
 
 impl Default for FeatureFlags {
@@ -44,14 +44,6 @@ impl FeatureFlags {
                 .proxy_push_notes_with_head
                 .unwrap_or(defaults.proxy_push_notes_with_head),
         }
-    }
-
-    pub fn rewrite_stash(&self) -> bool {
-        self.rewrite_stash
-    }
-
-    pub fn proxy_push_notes_with_head(&self) -> bool {
-        self.proxy_push_notes_with_head
     }
 }
 
