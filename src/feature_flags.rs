@@ -9,6 +9,14 @@ pub struct FeatureFlags {
 
 impl Default for FeatureFlags {
     fn default() -> Self {
+        #[cfg(debug_assertions)]
+        {
+            return FeatureFlags {
+                rewrite_stash: true,
+                proxy_push_notes_with_head: true,
+            };
+        }
+        #[cfg(not(debug_assertions))]
         FeatureFlags {
             rewrite_stash: false,
             proxy_push_notes_with_head: false,
