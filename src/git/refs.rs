@@ -278,7 +278,38 @@ pub fn merge_notes_from_ref(repo: &Repository, source_ref: &str) -> Result<(), G
         "Merging notes from {} into refs/notes/ai",
         source_ref
     ));
+
+    #[cfg(debug_assertions)]
+    {
+        // Get SHA before merge
+        let mut rev_parse_args = repo.global_args_for_exec();
+        rev_parse_args.push("rev-parse".to_string());
+        rev_parse_args.push("refs/notes/ai".to_string());
+        let before_sha = if let Ok(output) = exec_git(&rev_parse_args) {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        } else {
+            "N/A (ref doesn't exist yet)".to_string()
+        };
+
+        debug_log(&format!("Before merge - refs/notes/ai SHA: {}", before_sha));
+    }
+
     exec_git(&args)?;
+
+    #[cfg(debug_assertions)]
+    {
+        // Get SHA after merge
+        let mut rev_parse_args = repo.global_args_for_exec();
+        rev_parse_args.push("rev-parse".to_string());
+        rev_parse_args.push("refs/notes/ai".to_string());
+        let after_sha = if let Ok(output) = exec_git(&rev_parse_args) {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        } else {
+            "N/A".to_string()
+        };
+
+        debug_log(&format!("After merge - refs/notes/ai SHA: {}", after_sha));
+    }
     Ok(())
 }
 

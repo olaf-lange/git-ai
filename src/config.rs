@@ -8,8 +8,6 @@ use serde::Deserialize;
 
 use crate::feature_flags::FeatureFlags;
 use crate::git::repository::Repository;
-
-/// Centralized configuration for the application
 pub struct Config {
     git_path: String,
     ignore_prompts: bool,
