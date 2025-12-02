@@ -458,6 +458,7 @@ fn handle_stats(args: &[String]) {
     let mut json_output = false;
     let mut commit_sha = None;
     let mut commit_range: Option<CommitRange> = None;
+    let mut ignore_patterns: Vec<String> = Vec::new();
 
     let mut i = 0;
     while i < args.len() {
@@ -465,6 +466,16 @@ fn handle_stats(args: &[String]) {
             "--json" => {
                 json_output = true;
                 i += 1;
+            }
+            "--ignore" => {
+                // Next argument should be the pattern to ignore
+                if i + 1 < args.len() {
+                    ignore_patterns.push(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("--ignore requires a pattern argument");
+                    std::process::exit(1);
+                }
             }
             _ => {
                 // First non-flag argument is treated as commit SHA or range
@@ -507,7 +518,7 @@ fn handle_stats(args: &[String]) {
 
     // Handle commit range if detected
     if let Some(range) = commit_range {
-        match range_authorship::range_authorship(range, true) {
+        match range_authorship::range_authorship(range, true, &ignore_patterns) {
             Ok(stats) => {
                 if json_output {
                     let json_str = serde_json::to_string(&stats).unwrap();
@@ -524,7 +535,7 @@ fn handle_stats(args: &[String]) {
         return;
     }
 
-    if let Err(e) = stats_command(&repo, commit_sha.as_deref(), json_output) {
+    if let Err(e) = stats_command(&repo, commit_sha.as_deref(), json_output, &ignore_patterns) {
         match e {
             crate::error::GitAiError::Generic(msg) if msg.starts_with("No commit found:") => {
                 eprintln!("{}", msg);

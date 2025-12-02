@@ -88,7 +88,7 @@ pub fn post_commit(
     // }
 
     if !supress_output {
-        let stats = stats_for_commit_stats(repo, &commit_sha)?;
+        let stats = stats_for_commit_stats(repo, &commit_sha, &[])?;
         // Only print stats if we're in an interactive terminal
         let is_interactive = std::io::stdout().is_terminal();
         write_stats_to_terminal(&stats, is_interactive);

@@ -16,6 +16,20 @@ use std::io::IsTerminal;
 /// This is the hash of the empty tree object that git uses internally
 const EMPTY_TREE_HASH: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
+/// Check if a file path should be ignored based on the provided patterns
+pub fn should_ignore_file(path: &str, ignore_patterns: &[String]) -> bool {
+    let filename = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+
+    ignore_patterns.iter().any(|pattern| {
+        // Simple pattern matching: exact filename match
+        // Could be extended to support glob patterns in the future
+        filename == pattern
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RangeAuthorshipStats {
     pub authorship_stats: RangeAuthorshipStatsData,
@@ -34,6 +48,7 @@ pub struct RangeAuthorshipStatsData {
 pub fn range_authorship(
     commit_range: CommitRange,
     pre_fetch_contents: bool,
+    ignore_patterns: &[String],
 ) -> Result<RangeAuthorshipStats, GitAiError> {
     if let Err(e) = commit_range.is_valid() {
         return Err(e);
@@ -106,7 +121,7 @@ pub fn range_authorship(
     let commit_authorship = get_commits_with_notes_from_list(repository, &commit_shas)?;
 
     // Calculate range stats - now just pass start, end, and commits
-    let range_stats = calculate_range_stats_direct(repository, commit_range_clone)?;
+    let range_stats = calculate_range_stats_direct(repository, commit_range_clone, ignore_patterns)?;
 
     Ok(RangeAuthorshipStats {
         authorship_stats: RangeAuthorshipStatsData {
@@ -157,6 +172,7 @@ fn create_authorship_log_for_range(
     start_sha: &str,
     end_sha: &str,
     commit_shas: &[String],
+    ignore_patterns: &[String],
 ) -> Result<crate::authorship::authorship_log_serialization::AuthorshipLog, GitAiError> {
     use crate::authorship::virtual_attribution::{
         VirtualAttributions, merge_attributions_favoring_first,
@@ -168,7 +184,13 @@ fn create_authorship_log_for_range(
     ));
 
     // Step 1: Get list of changed files between the two commits
-    let changed_files = repo.diff_changed_files(start_sha, end_sha)?;
+    let all_changed_files = repo.diff_changed_files(start_sha, end_sha)?;
+
+    // Filter out ignored files from the changed files
+    let changed_files: Vec<String> = all_changed_files
+        .into_iter()
+        .filter(|file| !should_ignore_file(file, ignore_patterns))
+        .collect();
 
     if changed_files.is_empty() {
         // No files changed, return empty authorship log
@@ -315,6 +337,7 @@ fn get_git_diff_stats_for_range(
     repo: &Repository,
     start_sha: &str,
     end_sha: &str,
+    ignore_patterns: &[String],
 ) -> Result<(u32, u32), GitAiError> {
     // Use git diff --numstat to get diff statistics for the range
     let mut args = repo.global_args_for_exec();
@@ -336,7 +359,13 @@ fn get_git_diff_stats_for_range(
 
         // Parse numstat format: "added\tdeleted\tfilename"
         let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() >= 2 {
+        if parts.len() >= 3 {
+            // Check if this file should be ignored and skip it
+            let filename = parts[2];
+            if should_ignore_file(filename, ignore_patterns) {
+                continue;
+            }
+
             // Parse added lines
             if let Ok(added) = parts[0].parse::<u32>() {
                 added_lines += added;
@@ -359,21 +388,22 @@ fn get_git_diff_stats_for_range(
 fn calculate_range_stats_direct(
     repo: &Repository,
     commit_range: CommitRange,
+    ignore_patterns: &[String],
 ) -> Result<CommitStats, GitAiError> {
     let start_sha = commit_range.start_oid.clone();
     let end_sha = commit_range.end_oid.clone();
     // Special case: single commit range (start == end)
     if start_sha == end_sha {
-        return stats_for_commit_stats(repo, &end_sha);
+        return stats_for_commit_stats(repo, &end_sha, ignore_patterns);
     }
 
     // Step 1: Get git diff stats between start and end
     let (git_diff_added_lines, git_diff_deleted_lines) =
-        get_git_diff_stats_for_range(repo, &start_sha, &end_sha)?;
+        get_git_diff_stats_for_range(repo, &start_sha, &end_sha, ignore_patterns)?;
 
     // Step 2: Create in-memory authorship log for the range, filtered to only commits in the range
     let commit_shas = commit_range.clone().all_commits();
-    let authorship_log = create_authorship_log_for_range(repo, &start_sha, &end_sha, &commit_shas)?;
+    let authorship_log = create_authorship_log_for_range(repo, &start_sha, &end_sha, &commit_shas, ignore_patterns)?;
 
     // Step 3: Calculate stats from the authorship log
     let stats = stats_from_authorship_log(
@@ -467,7 +497,12 @@ mod tests {
         )
         .unwrap();
 
-        let stats = range_authorship(commit_range, false).unwrap();
+        let lockfile_patterns = vec![
+            "Cargo.lock".to_string(),
+            "package-lock.json".to_string(),
+            "yarn.lock".to_string(),
+        ];
+        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
 
         // Verify stats
         assert_eq!(stats.authorship_stats.total_commits, 1);
@@ -504,7 +539,12 @@ mod tests {
         )
         .unwrap();
 
-        let stats = range_authorship(commit_range, false).unwrap();
+        let lockfile_patterns = vec![
+            "Cargo.lock".to_string(),
+            "package-lock.json".to_string(),
+            "yarn.lock".to_string(),
+        ];
+        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
 
         // Verify stats - should include all commits from beginning
         assert_eq!(stats.authorship_stats.total_commits, 2);
@@ -543,7 +583,12 @@ mod tests {
         )
         .unwrap();
 
-        let stats = range_authorship(commit_range, false).unwrap();
+        let lockfile_patterns = vec![
+            "Cargo.lock".to_string(),
+            "package-lock.json".to_string(),
+            "yarn.lock".to_string(),
+        ];
+        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
 
         // For single commit, should use stats_for_commit_stats
         assert_eq!(stats.authorship_stats.total_commits, 1);
@@ -593,7 +638,12 @@ mod tests {
         )
         .unwrap();
 
-        let stats = range_authorship(commit_range, false).unwrap();
+        let lockfile_patterns = vec![
+            "Cargo.lock".to_string(),
+            "package-lock.json".to_string(),
+            "yarn.lock".to_string(),
+        ];
+        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
 
         // Verify stats
         assert_eq!(stats.authorship_stats.total_commits, 3);
@@ -626,7 +676,12 @@ mod tests {
         )
         .unwrap();
 
-        let stats = range_authorship(commit_range, false).unwrap();
+        let lockfile_patterns = vec![
+            "Cargo.lock".to_string(),
+            "package-lock.json".to_string(),
+            "yarn.lock".to_string(),
+        ];
+        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
 
         // Should have 1 commit but no diffs since start == end
         assert_eq!(stats.authorship_stats.total_commits, 1);
@@ -658,12 +713,255 @@ mod tests {
         )
         .unwrap();
 
-        let stats = range_authorship(commit_range, false).unwrap();
+        let lockfile_patterns = vec![
+            "Cargo.lock".to_string(),
+            "package-lock.json".to_string(),
+            "yarn.lock".to_string(),
+        ];
+        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
 
         // Verify all files are included
         assert_eq!(stats.authorship_stats.total_commits, 1);
         assert_eq!(stats.authorship_stats.commits_with_authorship, 1);
         assert_eq!(stats.range_stats.ai_additions, 2);
         assert_eq!(stats.range_stats.git_diff_added_lines, 2);
+    }
+
+    #[test]
+    fn test_range_authorship_ignores_single_lockfile() {
+        let tmp_repo = TmpRepo::new().unwrap();
+
+        // Create initial commit with a source file
+        tmp_repo.write_file("src/main.rs", "fn main() {}\n", true).unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
+        tmp_repo.commit_with_message("Initial commit").unwrap();
+        let first_sha = tmp_repo.get_head_commit_sha().unwrap();
+
+        // Add AI work to source file and also change a lockfile
+        tmp_repo
+            .write_file("src/main.rs", "fn main() {}\n// AI added code\nfn helper() {}\n", true)
+            .unwrap();
+        tmp_repo
+            .write_file("Cargo.lock", "# Large lockfile with 1000 lines\n".repeat(1000).as_str(), true)
+            .unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_ai("Claude", Some("claude-3-sonnet"), Some("cursor"))
+            .unwrap();
+        tmp_repo.commit_with_message("Add helper and update deps").unwrap();
+        let second_sha = tmp_repo.get_head_commit_sha().unwrap();
+
+        // Test range authorship
+        let commit_range = CommitRange::new(
+            &tmp_repo.gitai_repo(),
+            first_sha.clone(),
+            second_sha.clone(),
+            "HEAD".to_string(),
+        )
+        .unwrap();
+
+        let lockfile_patterns = vec![
+            "Cargo.lock".to_string(),
+            "package-lock.json".to_string(),
+            "yarn.lock".to_string(),
+        ];
+        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
+
+        // Verify lockfile is excluded: only 2 lines added (from main.rs), not 1000+ from lockfile
+        assert_eq!(stats.authorship_stats.total_commits, 1);
+        assert_eq!(stats.authorship_stats.commits_with_authorship, 1);
+        assert_eq!(stats.range_stats.ai_additions, 2); // Only the 2 AI lines in main.rs
+        assert_eq!(stats.range_stats.git_diff_added_lines, 2); // Lockfile excluded (1000 lines ignored)
+        // The key assertion: git_diff should be 2, not 1002 if lockfile was included
+        assert!(stats.range_stats.git_diff_added_lines < 100); // Significantly less than if lockfile was counted
+    }
+
+    #[test]
+    fn test_range_authorship_mixed_lockfile_and_source() {
+        let tmp_repo = TmpRepo::new().unwrap();
+
+        // Create initial commit
+        tmp_repo.write_file("src/lib.rs", "pub fn old() {}\n", true).unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
+        tmp_repo.commit_with_message("Initial commit").unwrap();
+        let first_sha = tmp_repo.get_head_commit_sha().unwrap();
+
+        // Human adds to source file
+        tmp_repo.write_file("src/lib.rs", "pub fn old() {}\npub fn new() {}\n", true).unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
+        tmp_repo.commit_with_message("Human adds function").unwrap();
+
+        // AI adds to source file, and package-lock.json is updated (with 1000 lines)
+        tmp_repo
+            .write_file("src/lib.rs", "pub fn old() {}\npub fn new() {}\n// AI comment\npub fn ai_func() {}\n", true)
+            .unwrap();
+        tmp_repo
+            .write_file("package-lock.json", "{\n  \"lockfileVersion\": 2,\n}\n".repeat(1000).as_str(), true)
+            .unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_ai("Claude", Some("claude-3-sonnet"), Some("cursor"))
+            .unwrap();
+        tmp_repo.commit_with_message("AI adds function and updates deps").unwrap();
+        let head_sha = tmp_repo.get_head_commit_sha().unwrap();
+
+        // Test range authorship
+        let commit_range = CommitRange::new(
+            &tmp_repo.gitai_repo(),
+            first_sha.clone(),
+            head_sha.clone(),
+            "HEAD".to_string(),
+        )
+        .unwrap();
+
+        let lockfile_patterns = vec![
+            "Cargo.lock".to_string(),
+            "package-lock.json".to_string(),
+            "yarn.lock".to_string(),
+        ];
+        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
+
+        // Key assertion: git_diff should only count lib.rs changes (3 lines), not package-lock.json (3000 lines)
+        assert_eq!(stats.authorship_stats.total_commits, 2);
+        assert_eq!(stats.authorship_stats.commits_with_authorship, 2);
+        assert_eq!(stats.range_stats.git_diff_added_lines, 3); // Only lib.rs, package-lock.json excluded
+        // Verify the total is much less than 3003 (if lockfile was included)
+        assert!(stats.range_stats.git_diff_added_lines < 100);
+        // Verify that some AI and human work is detected
+        assert!(stats.range_stats.ai_additions > 0);
+        assert!(stats.range_stats.human_additions > 0);
+    }
+
+    #[test]
+    fn test_range_authorship_multiple_lockfile_types() {
+        let tmp_repo = TmpRepo::new().unwrap();
+
+        // Create initial commit
+        tmp_repo.write_file("README.md", "# Project\n", true).unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
+        tmp_repo.commit_with_message("Initial commit").unwrap();
+        let first_sha = tmp_repo.get_head_commit_sha().unwrap();
+
+        // Add multiple lockfiles and one real source change
+        tmp_repo.write_file("Cargo.lock", "# Cargo lock\n".repeat(500).as_str(), true).unwrap();
+        tmp_repo.write_file("yarn.lock", "# yarn lock\n".repeat(500).as_str(), true).unwrap();
+        tmp_repo.write_file("poetry.lock", "# poetry lock\n".repeat(500).as_str(), true).unwrap();
+        tmp_repo.write_file("go.sum", "# go sum\n".repeat(500).as_str(), true).unwrap();
+        tmp_repo.write_file("README.md", "# Project\n## New Section\n", true).unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_ai("Claude", Some("claude-3-sonnet"), Some("cursor"))
+            .unwrap();
+        tmp_repo.commit_with_message("Update dependencies").unwrap();
+        let second_sha = tmp_repo.get_head_commit_sha().unwrap();
+
+        // Test range authorship
+        let commit_range = CommitRange::new(
+            &tmp_repo.gitai_repo(),
+            first_sha.clone(),
+            second_sha.clone(),
+            "HEAD".to_string(),
+        )
+        .unwrap();
+
+        let lockfile_patterns = vec![
+            "Cargo.lock".to_string(),
+            "package-lock.json".to_string(),
+            "yarn.lock".to_string(),
+            "poetry.lock".to_string(),
+            "go.sum".to_string(),
+        ];
+        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
+
+        // Verify: only the 1 README line is counted, all lockfiles excluded (2000 lines ignored)
+        assert_eq!(stats.authorship_stats.total_commits, 1);
+        assert_eq!(stats.authorship_stats.commits_with_authorship, 1);
+        assert_eq!(stats.range_stats.ai_additions, 1); // Only README.md line
+        assert_eq!(stats.range_stats.git_diff_added_lines, 1); // All lockfiles excluded
+    }
+
+    #[test]
+    fn test_range_authorship_lockfile_only_commit() {
+        let tmp_repo = TmpRepo::new().unwrap();
+
+        // Create initial commit
+        tmp_repo.write_file("src/main.rs", "fn main() {}\n", true).unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
+        tmp_repo.commit_with_message("Initial commit").unwrap();
+        let first_sha = tmp_repo.get_head_commit_sha().unwrap();
+
+        // Commit that only changes lockfiles (common scenario)
+        tmp_repo
+            .write_file("package-lock.json", "{\n  \"version\": \"1.0.0\"\n}\n".repeat(1000).as_str(), true)
+            .unwrap();
+        tmp_repo
+            .write_file("yarn.lock", "# yarn\n".repeat(500).as_str(), true)
+            .unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
+        tmp_repo.commit_with_message("Update lockfiles only").unwrap();
+        let second_sha = tmp_repo.get_head_commit_sha().unwrap();
+
+        // Test range authorship
+        let commit_range = CommitRange::new(
+            &tmp_repo.gitai_repo(),
+            first_sha.clone(),
+            second_sha.clone(),
+            "HEAD".to_string(),
+        )
+        .unwrap();
+
+        let lockfile_patterns = vec![
+            "Cargo.lock".to_string(),
+            "package-lock.json".to_string(),
+            "yarn.lock".to_string(),
+        ];
+        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
+
+        // Verify: no lines counted since only lockfiles changed
+        assert_eq!(stats.authorship_stats.total_commits, 1);
+        assert_eq!(stats.range_stats.git_diff_added_lines, 0); // All lockfiles excluded
+        assert_eq!(stats.range_stats.ai_additions, 0);
+        assert_eq!(stats.range_stats.human_additions, 0);
+    }
+
+    #[test]
+    fn test_should_ignore_file_with_patterns() {
+        let lockfile_patterns = vec![
+            "package-lock.json".to_string(),
+            "yarn.lock".to_string(),
+            "Cargo.lock".to_string(),
+            "go.sum".to_string(),
+        ];
+
+        // Test that specified patterns are ignored
+        assert!(should_ignore_file("package-lock.json", &lockfile_patterns));
+        assert!(should_ignore_file("yarn.lock", &lockfile_patterns));
+        assert!(should_ignore_file("Cargo.lock", &lockfile_patterns));
+        assert!(should_ignore_file("go.sum", &lockfile_patterns));
+
+        // Test with paths
+        assert!(should_ignore_file("src/package-lock.json", &lockfile_patterns));
+        assert!(should_ignore_file("backend/Cargo.lock", &lockfile_patterns));
+        assert!(should_ignore_file("./yarn.lock", &lockfile_patterns));
+
+        // Test that non-matching files are not ignored
+        assert!(!should_ignore_file("package.json", &lockfile_patterns));
+        assert!(!should_ignore_file("Cargo.toml", &lockfile_patterns));
+        assert!(!should_ignore_file("src/main.rs", &lockfile_patterns));
+        assert!(!should_ignore_file("pnpm-lock.yaml", &lockfile_patterns)); // Not in our pattern list
+
+        // Test with empty patterns - nothing should be ignored
+        let empty_patterns: Vec<String> = vec![];
+        assert!(!should_ignore_file("package-lock.json", &empty_patterns));
+        assert!(!should_ignore_file("Cargo.lock", &empty_patterns));
     }
 }

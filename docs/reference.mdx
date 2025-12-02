@@ -50,12 +50,18 @@ git-ai stats 4b825dc642cb6eb9a060e54bf8d69288fbee4904..HEAD
 git-ai stats --json
 git-ai stats <commit-sha> --json
 git-ai stats <start>..<end> --json
+
+# Ignore specific files from stats (e.g., lockfiles)
+git-ai stats --ignore Cargo.lock
+git-ai stats --ignore Cargo.lock --ignore package-lock.json --ignore yarn.lock
+git-ai stats <start>..<end> --ignore Cargo.lock --ignore go.sum
 ```
 
 **Options:**
 - `<commit-sha>` - Optional commit SHA (defaults to HEAD)
 - `<start>..<end>` - Optional commit range; when provided, stats are computed over the entire range rather than a single commit
 - `--json` - Output statistics in JSON format
+- `--ignore <pattern>` - Exclude files matching the pattern from statistics (can be specified multiple times). Matches exact filename in any directory.
 
 **Output**
 

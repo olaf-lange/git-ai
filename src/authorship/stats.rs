@@ -67,6 +67,7 @@ pub fn stats_command(
     repo: &Repository,
     commit_sha: Option<&str>,
     json: bool,
+    ignore_patterns: &[String],
 ) -> Result<(), GitAiError> {
     let (target, refname) = if let Some(sha) = commit_sha {
         // Validate that the commit exists using revparse_single
@@ -94,7 +95,7 @@ pub fn stats_command(
         target, refname
     ));
 
-    let stats = stats_for_commit_stats(repo, &target)?;
+    let stats = stats_for_commit_stats(repo, &target, ignore_patterns)?;
 
     if json {
         let json_str = serde_json::to_string(&stats)?;
@@ -558,11 +559,12 @@ pub fn stats_from_authorship_log(
 pub fn stats_for_commit_stats(
     repo: &Repository,
     commit_sha: &str,
+    ignore_patterns: &[String],
 ) -> Result<CommitStats, GitAiError> {
     // Step 1: get the diff between this commit and its parent ON refname (if more than one parent)
     // If initial than everything is additions
     // We want the count here git shows +111 -55
-    let (git_diff_added_lines, git_diff_deleted_lines) = get_git_diff_stats(repo, commit_sha)?;
+    let (git_diff_added_lines, git_diff_deleted_lines) = get_git_diff_stats(repo, commit_sha, ignore_patterns)?;
 
     // Step 2: get the authorship log for this commit
     let authorship_log = get_authorship(repo, &commit_sha);
@@ -576,7 +578,7 @@ pub fn stats_for_commit_stats(
 }
 
 /// Get git diff statistics between commit and its parent
-pub fn get_git_diff_stats(repo: &Repository, commit_sha: &str) -> Result<(u32, u32), GitAiError> {
+pub fn get_git_diff_stats(repo: &Repository, commit_sha: &str, ignore_patterns: &[String]) -> Result<(u32, u32), GitAiError> {
     // Use git show --numstat to get diff statistics
     let mut args = repo.global_args_for_exec();
     args.push("show".to_string());
@@ -603,7 +605,13 @@ pub fn get_git_diff_stats(repo: &Repository, commit_sha: &str) -> Result<(u32, u
 
         // Parse numstat format: "added\tdeleted\tfilename"
         let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() >= 2 {
+        if parts.len() >= 3 {
+            // Check if this file should be ignored
+            let filename = parts[2];
+            if crate::authorship::range_authorship::should_ignore_file(filename, ignore_patterns) {
+                continue;
+            }
+
             // Parse added lines
             if let Ok(added) = parts[0].parse::<u32>() {
                 added_lines += added;
@@ -878,7 +886,7 @@ mod tests {
         let head_sha = tmp_repo.get_head_commit_sha().unwrap();
 
         // Test our stats function
-        let stats = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha).unwrap();
+        let stats = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &[]).unwrap();
 
         // Verify the stats
         assert_eq!(
@@ -930,7 +938,7 @@ mod tests {
         tmp_repo.commit_with_message("Mixed commit").unwrap();
 
         let head_sha = tmp_repo.get_head_commit_sha().unwrap();
-        let stats = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha).unwrap();
+        let stats = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &[]).unwrap();
 
         // Verify the stats
         assert_eq!(stats.human_additions, 2, "Human added 2 lines");
@@ -961,7 +969,7 @@ mod tests {
         tmp_repo.commit_with_message("Initial commit").unwrap();
 
         let head_sha = tmp_repo.get_head_commit_sha().unwrap();
-        let stats = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha).unwrap();
+        let stats = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &[]).unwrap();
 
         // For initial commit, everything should be additions
         assert_eq!(
@@ -978,5 +986,149 @@ mod tests {
             stats.git_diff_deleted_lines, 0,
             "Git diff shows 0 deleted lines"
         );
+    }
+
+    #[test]
+    fn test_stats_ignores_single_lockfile() {
+        let tmp_repo = TmpRepo::new().unwrap();
+
+        // Initial commit
+        tmp_repo.write_file("src/main.rs", "fn main() {}\n", true).unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
+        tmp_repo.commit_with_message("Initial commit").unwrap();
+
+        // Commit that adds source code and a large lockfile
+        tmp_repo
+            .write_file("src/main.rs", "fn main() {}\nfn helper() {}\n", true)
+            .unwrap();
+        tmp_repo
+            .write_file("Cargo.lock", "# lockfile\n".repeat(1000).as_str(), true)
+            .unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_ai("Claude", Some("claude-3-sonnet"), Some("cursor"))
+            .unwrap();
+        tmp_repo.commit_with_message("Add helper and deps").unwrap();
+
+        let head_sha = tmp_repo.get_head_commit_sha().unwrap();
+
+        // Test WITHOUT ignore - should count lockfile
+        let stats_with_lockfile = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &[]).unwrap();
+        assert_eq!(stats_with_lockfile.git_diff_added_lines, 1001); // 1 source + 1000 lockfile
+
+        // Test WITH ignore - should exclude lockfile
+        let ignore_patterns = vec!["Cargo.lock".to_string()];
+        let stats_without_lockfile = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &ignore_patterns).unwrap();
+        assert_eq!(stats_without_lockfile.git_diff_added_lines, 1); // Only 1 source line
+        assert_eq!(stats_without_lockfile.ai_additions, 1);
+    }
+
+    #[test]
+    fn test_stats_ignores_multiple_lockfiles() {
+        let tmp_repo = TmpRepo::new().unwrap();
+
+        // Initial commit
+        tmp_repo.write_file("README.md", "# Project\n", true).unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
+        tmp_repo.commit_with_message("Initial commit").unwrap();
+
+        // Commit that updates multiple lockfiles and one source file
+        tmp_repo
+            .write_file("README.md", "# Project\n## New\n", true)
+            .unwrap();
+        tmp_repo
+            .write_file("Cargo.lock", "# cargo\n".repeat(500).as_str(), true)
+            .unwrap();
+        tmp_repo
+            .write_file("package-lock.json", "{}\n".repeat(500).as_str(), true)
+            .unwrap();
+        tmp_repo
+            .write_file("yarn.lock", "# yarn\n".repeat(500).as_str(), true)
+            .unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
+        tmp_repo.commit_with_message("Update deps").unwrap();
+
+        let head_sha = tmp_repo.get_head_commit_sha().unwrap();
+
+        // Test WITHOUT ignore - counts all files (1501 lines)
+        let stats_all = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &[]).unwrap();
+        assert_eq!(stats_all.git_diff_added_lines, 1501);
+
+        // Test WITH ignore - only counts README (1 line)
+        let ignore_patterns = vec![
+            "Cargo.lock".to_string(),
+            "package-lock.json".to_string(),
+            "yarn.lock".to_string(),
+        ];
+        let stats_filtered = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &ignore_patterns).unwrap();
+        assert_eq!(stats_filtered.git_diff_added_lines, 1);
+        assert_eq!(stats_filtered.human_additions, 1);
+    }
+
+    #[test]
+    fn test_stats_with_lockfile_only_commit() {
+        let tmp_repo = TmpRepo::new().unwrap();
+
+        // Initial commit
+        tmp_repo.write_file("src/lib.rs", "pub fn foo() {}\n", true).unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
+        tmp_repo.commit_with_message("Initial commit").unwrap();
+
+        // Commit that ONLY updates lockfiles (common during dependency updates)
+        tmp_repo
+            .write_file("Cargo.lock", "# updated\n".repeat(2000).as_str(), true)
+            .unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
+        tmp_repo.commit_with_message("Update dependencies").unwrap();
+
+        let head_sha = tmp_repo.get_head_commit_sha().unwrap();
+
+        // Test WITHOUT ignore - shows 2000 lines
+        let stats_with = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &[]).unwrap();
+        assert_eq!(stats_with.git_diff_added_lines, 2000);
+
+        // Test WITH ignore - shows 0 lines (lockfile-only commit)
+        let ignore_patterns = vec!["Cargo.lock".to_string()];
+        let stats_without = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &ignore_patterns).unwrap();
+        assert_eq!(stats_without.git_diff_added_lines, 0);
+        assert_eq!(stats_without.ai_additions, 0);
+        assert_eq!(stats_without.human_additions, 0);
+    }
+
+    #[test]
+    fn test_stats_empty_ignore_patterns() {
+        let tmp_repo = TmpRepo::new().unwrap();
+
+        // Initial commit
+        tmp_repo.write_file("test.txt", "Line1\n", true).unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
+        tmp_repo.commit_with_message("Initial commit").unwrap();
+
+        // Add lines
+        tmp_repo
+            .write_file("test.txt", "Line1\nLine2\nLine3\n", true)
+            .unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_ai("Claude", Some("claude-3-sonnet"), Some("cursor"))
+            .unwrap();
+        tmp_repo.commit_with_message("Add lines").unwrap();
+
+        let head_sha = tmp_repo.get_head_commit_sha().unwrap();
+
+        // Test with empty patterns - should behave same as no filtering
+        let stats = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &[]).unwrap();
+        assert_eq!(stats.git_diff_added_lines, 2);
+        assert_eq!(stats.ai_additions, 2);
     }
 }
