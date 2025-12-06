@@ -46,6 +46,16 @@ pub struct CommitRange<'a> {
 }
 
 impl<'a> CommitRange<'a> {
+    /// Create an empty CommitRange with no commits in its iterator.
+    pub fn empty(repo: &'a Repository) -> Self {
+        Self {
+            repo,
+            start_oid: String::new(),
+            end_oid: String::new(),
+            refname: String::new(),
+        }
+    }
+
     #[allow(dead_code)]
     pub fn new(
         repo: &'a Repository,
@@ -221,6 +231,15 @@ impl<'a> IntoIterator for CommitRange<'a> {
     type IntoIter = CommitRangeIterator<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
+        // Empty range - return empty iterator
+        if self.start_oid.is_empty() && self.end_oid.is_empty() {
+            return CommitRangeIterator {
+                repo: self.repo,
+                commit_oids: Vec::new(),
+                index: 0,
+            };
+        }
+
         // ie for single commit branches
         if self.start_oid == self.end_oid {
             return CommitRangeIterator {

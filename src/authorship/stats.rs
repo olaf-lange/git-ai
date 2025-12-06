@@ -521,10 +521,6 @@ pub fn stats_from_authorship_log(
                 prompt_record.agent_id.tool, prompt_record.agent_id.model
             );
             let tool_stats = commit_stats.tool_model_breakdown.entry(key).or_default();
-            tool_stats.ai_additions += std::cmp::min(
-                prompt_record.total_additions,
-                prompt_record.overriden_lines + prompt_record.accepted_lines,
-            );
             tool_stats.total_ai_additions += prompt_record.total_additions;
             tool_stats.total_ai_deletions += prompt_record.total_deletions;
             tool_stats.mixed_additions += prompt_record.overriden_lines;
@@ -544,6 +540,11 @@ pub fn stats_from_authorship_log(
             commit_stats.mixed_additions + commit_stats.ai_accepted,
             git_diff_added_lines,
         );
+
+        // Calculate ai_additions for each tool following the same contract: ai_additions = ai_accepted + mixed_additions
+        for tool_stats in commit_stats.tool_model_breakdown.values_mut() {
+            tool_stats.ai_additions = tool_stats.ai_accepted + tool_stats.mixed_additions;
+        }
     }
 
     // Human additions are the difference between total git diff and AI accepted lines (ensure non-negative)
@@ -564,7 +565,8 @@ pub fn stats_for_commit_stats(
     // Step 1: get the diff between this commit and its parent ON refname (if more than one parent)
     // If initial than everything is additions
     // We want the count here git shows +111 -55
-    let (git_diff_added_lines, git_diff_deleted_lines) = get_git_diff_stats(repo, commit_sha, ignore_patterns)?;
+    let (git_diff_added_lines, git_diff_deleted_lines) =
+        get_git_diff_stats(repo, commit_sha, ignore_patterns)?;
 
     // Step 2: get the authorship log for this commit
     let authorship_log = get_authorship(repo, &commit_sha);
@@ -578,7 +580,11 @@ pub fn stats_for_commit_stats(
 }
 
 /// Get git diff statistics between commit and its parent
-pub fn get_git_diff_stats(repo: &Repository, commit_sha: &str, ignore_patterns: &[String]) -> Result<(u32, u32), GitAiError> {
+pub fn get_git_diff_stats(
+    repo: &Repository,
+    commit_sha: &str,
+    ignore_patterns: &[String],
+) -> Result<(u32, u32), GitAiError> {
     // Use git show --numstat to get diff statistics
     let mut args = repo.global_args_for_exec();
     args.push("show".to_string());
@@ -993,7 +999,9 @@ mod tests {
         let tmp_repo = TmpRepo::new().unwrap();
 
         // Initial commit
-        tmp_repo.write_file("src/main.rs", "fn main() {}\n", true).unwrap();
+        tmp_repo
+            .write_file("src/main.rs", "fn main() {}\n", true)
+            .unwrap();
         tmp_repo
             .trigger_checkpoint_with_author("test_user")
             .unwrap();
@@ -1014,12 +1022,14 @@ mod tests {
         let head_sha = tmp_repo.get_head_commit_sha().unwrap();
 
         // Test WITHOUT ignore - should count lockfile
-        let stats_with_lockfile = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &[]).unwrap();
+        let stats_with_lockfile =
+            stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &[]).unwrap();
         assert_eq!(stats_with_lockfile.git_diff_added_lines, 1001); // 1 source + 1000 lockfile
 
         // Test WITH ignore - should exclude lockfile
         let ignore_patterns = vec!["Cargo.lock".to_string()];
-        let stats_without_lockfile = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &ignore_patterns).unwrap();
+        let stats_without_lockfile =
+            stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &ignore_patterns).unwrap();
         assert_eq!(stats_without_lockfile.git_diff_added_lines, 1); // Only 1 source line
         assert_eq!(stats_without_lockfile.ai_additions, 1);
     }
@@ -1029,7 +1039,9 @@ mod tests {
         let tmp_repo = TmpRepo::new().unwrap();
 
         // Initial commit
-        tmp_repo.write_file("README.md", "# Project\n", true).unwrap();
+        tmp_repo
+            .write_file("README.md", "# Project\n", true)
+            .unwrap();
         tmp_repo
             .trigger_checkpoint_with_author("test_user")
             .unwrap();
@@ -1065,7 +1077,8 @@ mod tests {
             "package-lock.json".to_string(),
             "yarn.lock".to_string(),
         ];
-        let stats_filtered = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &ignore_patterns).unwrap();
+        let stats_filtered =
+            stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &ignore_patterns).unwrap();
         assert_eq!(stats_filtered.git_diff_added_lines, 1);
         assert_eq!(stats_filtered.human_additions, 1);
     }
@@ -1075,7 +1088,9 @@ mod tests {
         let tmp_repo = TmpRepo::new().unwrap();
 
         // Initial commit
-        tmp_repo.write_file("src/lib.rs", "pub fn foo() {}\n", true).unwrap();
+        tmp_repo
+            .write_file("src/lib.rs", "pub fn foo() {}\n", true)
+            .unwrap();
         tmp_repo
             .trigger_checkpoint_with_author("test_user")
             .unwrap();
@@ -1098,7 +1113,8 @@ mod tests {
 
         // Test WITH ignore - shows 0 lines (lockfile-only commit)
         let ignore_patterns = vec!["Cargo.lock".to_string()];
-        let stats_without = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &ignore_patterns).unwrap();
+        let stats_without =
+            stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &ignore_patterns).unwrap();
         assert_eq!(stats_without.git_diff_added_lines, 0);
         assert_eq!(stats_without.ai_additions, 0);
         assert_eq!(stats_without.human_additions, 0);
@@ -1137,7 +1153,9 @@ mod tests {
         let tmp_repo = TmpRepo::new().unwrap();
 
         // Initial commit
-        tmp_repo.write_file("src/lib.rs", "pub fn foo() {}\n", true).unwrap();
+        tmp_repo
+            .write_file("src/lib.rs", "pub fn foo() {}\n", true)
+            .unwrap();
         tmp_repo
             .trigger_checkpoint_with_author("test_user")
             .unwrap();
@@ -1154,10 +1172,18 @@ mod tests {
             .write_file("package-lock.json", "{}\n".repeat(500).as_str(), true)
             .unwrap();
         tmp_repo
-            .write_file("api.generated.ts", "// generated\n".repeat(300).as_str(), true)
+            .write_file(
+                "api.generated.ts",
+                "// generated\n".repeat(300).as_str(),
+                true,
+            )
             .unwrap();
         tmp_repo
-            .write_file("schema.generated.js", "// schema\n".repeat(200).as_str(), true)
+            .write_file(
+                "schema.generated.js",
+                "// schema\n".repeat(200).as_str(),
+                true,
+            )
             .unwrap();
         tmp_repo
             .trigger_checkpoint_with_ai("Claude", Some("claude-3-sonnet"), Some("cursor"))
@@ -1172,11 +1198,12 @@ mod tests {
 
         // Test WITH glob patterns - only source code (1 line)
         let glob_patterns = vec![
-            "*.lock".to_string(),          // Matches Cargo.lock
-            "*lock.json".to_string(),      // Matches package-lock.json
-            "*.generated.*".to_string(),   // Matches *.generated.ts, *.generated.js
+            "*.lock".to_string(),        // Matches Cargo.lock
+            "*lock.json".to_string(),    // Matches package-lock.json
+            "*.generated.*".to_string(), // Matches *.generated.ts, *.generated.js
         ];
-        let stats_filtered = stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &glob_patterns).unwrap();
+        let stats_filtered =
+            stats_for_commit_stats(&tmp_repo.gitai_repo(), &head_sha, &glob_patterns).unwrap();
         assert_eq!(stats_filtered.git_diff_added_lines, 1);
         assert_eq!(stats_filtered.ai_additions, 1);
     }
