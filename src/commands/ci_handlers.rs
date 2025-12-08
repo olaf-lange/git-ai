@@ -29,6 +29,7 @@ fn handle_ci_github(args: &[String]) {
     // Subcommands: install | (default: run in CI context)
     match args[0].as_str() {
         "run" => {
+            let no_cleanup = args[1..].iter().any(|a| a == "--no-cleanup");
             let ci_context = get_github_ci_context();
             match ci_context {
                 Ok(Some(ci_context)) => {
@@ -37,11 +38,15 @@ fn handle_ci_github(args: &[String]) {
                         eprintln!("Error running GitHub CI context: {}", e);
                         std::process::exit(1);
                     }
-                    if let Err(e) = ci_context.teardown() {
-                        eprintln!("Error tearing down GitHub CI context: {}", e);
-                        std::process::exit(1);
+                    if !no_cleanup {
+                        if let Err(e) = ci_context.teardown() {
+                            eprintln!("Error tearing down GitHub CI context: {}", e);
+                            std::process::exit(1);
+                        }
+                        debug_log("GitHub CI context teared down");
+                    } else {
+                        debug_log("Skipping teardown (--no-cleanup)");
                     }
-                    debug_log("GitHub CI context teared down");
                     std::process::exit(0);
                 }
                 Err(e) => {
@@ -185,7 +190,7 @@ fn print_ci_help_and_exit() -> ! {
     eprintln!("");
     eprintln!("Subcommands:");
     eprintln!("  github           GitHub CI");
-    eprintln!("    run            Run GitHub CI in current repo");
+    eprintln!("    run [--no-cleanup]  Run GitHub CI in current repo");
     eprintln!("    install        Install/update workflow in current repo");
     eprintln!("  local            Run CI locally by event name and flags");
     eprintln!("                   Usage: git-ai ci local <event> [flags]");
@@ -214,7 +219,8 @@ fn print_ci_github_help_and_exit() -> ! {
     eprintln!("Usage: git-ai ci github <subcommand> [args...]");
     eprintln!("");
     eprintln!("Subcommands:");
-    eprintln!("  run            Run GitHub CI in current repo");
-    eprintln!("  install        Install/update workflow in current repo");
+    eprintln!("  run [--no-cleanup]   Run GitHub CI in current repo");
+    eprintln!("                       --no-cleanup  Skip teardown after run");
+    eprintln!("  install              Install/update workflow in current repo");
     std::process::exit(1);
 }
