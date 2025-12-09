@@ -293,7 +293,7 @@ jobs:
         run: |
           VERSION="${{ steps.release-meta.outputs.tag_name }}"
           # Convert checksums to pipe-separated format for embedding
-          CHECKSUMS=$(cat release/SHA256SUMS | tr '\n' '|' | sed 's/|$//')
+          CHECKSUMS=$(tr '\n' '|' < release/SHA256SUMS | sed 's/|$//')
           if [ -z "$CHECKSUMS" ]; then
             CHECKSUMS="__CHECKSUMS_PLACEHOLDER__"
           fi
