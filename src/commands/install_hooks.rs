@@ -23,8 +23,8 @@ const CLAUDE_POST_TOOL_CMD: &str = "checkpoint claude --hook-input stdin";
 // Cursor hooks (requires absolute path to avoid shell config loading delay)
 const CURSOR_BEFORE_SUBMIT_CMD: &str = "checkpoint cursor --hook-input stdin";
 const CURSOR_AFTER_EDIT_CMD: &str = "checkpoint cursor --hook-input stdin";
-const CURSOR_BEFORE_TAB_FILE_READ_CMD: &str = "checkpoint cursor-tab --hook-input stdin";
-const CURSOR_AFTER_TAB_FILE_EDIT_CMD: &str = "checkpoint cursor-tab --hook-input stdin";
+const CURSOR_BEFORE_TAB_FILE_READ_CMD: &str = "checkpoint cursor --hook-input stdin";
+const CURSOR_AFTER_TAB_FILE_EDIT_CMD: &str = "checkpoint cursor --hook-input stdin";
 
 // OpenCode plugin content (TypeScript), embedded from the source file to avoid drift
 const OPENCODE_PLUGIN_CONTENT: &str = include_str!(concat!(
@@ -796,6 +796,8 @@ fn install_cursor_hooks(binary_path: &Path, dry_run: bool) -> Result<Option<Stri
     // Build commands with absolute path
     let before_submit_cmd = format!("{} {}", binary_path.display(), CURSOR_BEFORE_SUBMIT_CMD);
     let after_edit_cmd = format!("{} {}", binary_path.display(), CURSOR_AFTER_EDIT_CMD);
+    let before_tab_file_read_cmd = format!("{} {}", binary_path.display(), CURSOR_BEFORE_TAB_FILE_READ_CMD);
+    let after_tab_file_edit_cmd = format!("{} {}", binary_path.display(), CURSOR_AFTER_TAB_FILE_EDIT_CMD);
 
     // Desired hooks payload for Cursor with new hook names
     let desired: Value = json!({
@@ -809,6 +811,16 @@ fn install_cursor_hooks(binary_path: &Path, dry_run: bool) -> Result<Option<Stri
             "afterFileEdit": [
                 {
                     "command": after_edit_cmd
+                }
+            ],
+            "beforeTabFileRead": [
+                {
+                    "command": before_tab_file_read_cmd
+                }
+            ],
+            "afterTabFileEdit": [
+                {
+                    "command": after_tab_file_edit_cmd
                 }
             ]
         }
@@ -827,8 +839,8 @@ fn install_cursor_hooks(binary_path: &Path, dry_run: bool) -> Result<Option<Stri
     // Merge hooks object
     let mut hooks_obj = merged.get("hooks").cloned().unwrap_or_else(|| json!({}));
 
-    // Process both hook types
-    for hook_name in &["beforeSubmitPrompt", "afterFileEdit"] {
+    // Process all hook types
+    for hook_name in &["beforeSubmitPrompt", "afterFileEdit", "beforeTabFileRead", "afterTabFileEdit"] {
         let desired_hooks = desired
             .get("hooks")
             .and_then(|h| h.get(*hook_name))
