@@ -3,7 +3,7 @@
 //! This library maintains attribution ranges as files are edited, preserving
 //! authorship information even through moves, edits, and whitespace changes.
 
-use crate::authorship::imara_diff_utils::{capture_diff_slices, ByteDiff, ByteDiffOp, DiffOp};
+use crate::authorship::imara_diff_utils::{ByteDiff, ByteDiffOp, DiffOp, capture_diff_slices};
 use crate::authorship::move_detection::{DeletedLine, InsertedLine, detect_moves};
 use crate::authorship::working_log::CheckpointKind;
 use crate::error::GitAiError;
@@ -287,9 +287,7 @@ impl AttributionTracker {
     /// Create a new attribution tracker with custom configuration
     #[allow(dead_code)]
     pub fn with_config(config: AttributionConfig) -> Self {
-        AttributionTracker {
-            config,
-        }
+        AttributionTracker { config }
     }
 
     fn compute_diffs(
@@ -357,20 +355,13 @@ impl AttributionTracker {
         old_content: &str,
         diffs: &mut Vec<ByteDiff>,
     ) -> Result<(), GitAiError> {
-        if let DiffOp::Equal {
-            old_index, len, ..
-        } = op
-        {
+        if let DiffOp::Equal { old_index, len, .. } = op {
             if len == 0 {
                 return Ok(());
             }
 
-            let (start, end) = line_range_to_byte_range(
-                old_lines,
-                old_index,
-                old_index + len,
-                old_content.len(),
-            );
+            let (start, end) =
+                line_range_to_byte_range(old_lines, old_index, old_index + len, old_content.len());
 
             if start < end {
                 diffs.push(ByteDiff::new(
@@ -418,7 +409,8 @@ impl AttributionTracker {
         );
 
         computation.diffs.append(&mut hunk_diffs);
-        computation.substantive_new_ranges
+        computation
+            .substantive_new_ranges
             .extend(substantive_ranges.into_iter());
 
         Ok(())
@@ -909,7 +901,9 @@ impl AttributionTracker {
                     } else if is_substantive_insert {
                         (current_author.to_string(), ts)
                     } else if is_formatting_pair {
-                        if let Some(attr) = find_attribution_for_insertion(old_attributions, old_pos) {
+                        if let Some(attr) =
+                            find_attribution_for_insertion(old_attributions, old_pos)
+                        {
                             (attr.author_id.clone(), attr.ts)
                         } else if let Some(attr) = new_attributions.last() {
                             (attr.author_id.clone(), attr.ts)
@@ -918,7 +912,9 @@ impl AttributionTracker {
                         }
                     } else if let Some(attr) = new_attributions.last() {
                         (attr.author_id.clone(), attr.ts)
-                    } else if let Some(attr) = find_attribution_for_insertion(old_attributions, old_pos) {
+                    } else if let Some(attr) =
+                        find_attribution_for_insertion(old_attributions, old_pos)
+                    {
                         (attr.author_id.clone(), attr.ts)
                     } else {
                         (current_author.to_string(), ts)
@@ -961,21 +957,32 @@ fn line_span_for_op(op: &DiffOp, for_old: bool) -> (usize, usize) {
     match (op, for_old) {
         (DiffOp::Equal { old_index, len, .. }, true) => (*old_index, *old_index + *len),
         (DiffOp::Equal { new_index, len, .. }, false) => (*new_index, *new_index + *len),
-        (DiffOp::Delete {
-            old_index, old_len, ..
-        }, true) => (*old_index, *old_index + *old_len),
+        (
+            DiffOp::Delete {
+                old_index, old_len, ..
+            },
+            true,
+        ) => (*old_index, *old_index + *old_len),
         (DiffOp::Delete { new_index, .. }, false) => (*new_index, *new_index),
-        (DiffOp::Insert {
-            old_index, .. }, true) => (*old_index, *old_index),
-        (DiffOp::Insert {
-            new_index, new_len, ..
-        }, false) => (*new_index, *new_index + *new_len),
-        (DiffOp::Replace {
-            old_index, old_len, ..
-        }, true) => (*old_index, *old_index + *old_len),
-        (DiffOp::Replace {
-            new_index, new_len, ..
-        }, false) => (*new_index, *new_index + *new_len),
+        (DiffOp::Insert { old_index, .. }, true) => (*old_index, *old_index),
+        (
+            DiffOp::Insert {
+                new_index, new_len, ..
+            },
+            false,
+        ) => (*new_index, *new_index + *new_len),
+        (
+            DiffOp::Replace {
+                old_index, old_len, ..
+            },
+            true,
+        ) => (*old_index, *old_index + *old_len),
+        (
+            DiffOp::Replace {
+                new_index, new_len, ..
+            },
+            false,
+        ) => (*new_index, *new_index + *new_len),
     }
 }
 
@@ -1325,7 +1332,10 @@ fn find_attribution_for_insertion<'a>(
     if let Some(overlapping) = old_attributions
         .iter()
         .filter(|a| a.overlaps(position, position.saturating_add(1)))
-        .max_by(|a, b| a.ts.cmp(&b.ts).then_with(|| (a.end - a.start).cmp(&(b.end - b.start))))
+        .max_by(|a, b| {
+            a.ts.cmp(&b.ts)
+                .then_with(|| (a.end - a.start).cmp(&(b.end - b.start)))
+        })
     {
         return Some(overlapping);
     }
@@ -1686,7 +1696,12 @@ mod tests {
             .update_attributions(old, new, &old_attrs, "Bob", TEST_TS + 1)
             .unwrap();
 
-        assert_non_ws_owned_by(&updated, new, "Alice", "indentation change should not steal tokens");
+        assert_non_ws_owned_by(
+            &updated,
+            new,
+            "Alice",
+            "indentation change should not steal tokens",
+        );
     }
 
     #[test]
@@ -1742,13 +1757,15 @@ mod tests {
         // Test move detection with blocks of 3+ lines (the default threshold)
         let tracker = AttributionTracker::new();
         // Helper function block with 4 lines
-        let helper_block = "fn helper() {\n    let x = 1;\n    let y = 2;\n    println!(\"helper\");\n}\n";
-        // Main function block with 4 lines  
-        let main_block = "fn main() {\n    let a = 3;\n    let b = 4;\n    println!(\"main\");\n}\n";
-        
+        let helper_block =
+            "fn helper() {\n    let x = 1;\n    let y = 2;\n    println!(\"helper\");\n}\n";
+        // Main function block with 4 lines
+        let main_block =
+            "fn main() {\n    let a = 3;\n    let b = 4;\n    println!(\"main\");\n}\n";
+
         let old = format!("{}{}", helper_block, main_block);
         let new = format!("{}{}", main_block, helper_block);
-        
+
         let helper_len = helper_block.len();
         let old_attrs = vec![
             Attribution::new(0, helper_len, "Alice".into(), TEST_TS),
@@ -1759,20 +1776,17 @@ mod tests {
             .update_attributions(&old, &new, &old_attrs, "Charlie", TEST_TS + 1)
             .unwrap();
 
-        // After the move, the helper block (originally written by Alice) should 
+        // After the move, the helper block (originally written by Alice) should
         // retain Alice's authorship in the new position
         let helper_pos_in_new = new.find("helper").unwrap();
         let helper_owner = updated
             .iter()
             .find(|a| a.start <= helper_pos_in_new && a.end > helper_pos_in_new);
-        
+
         // The moved helper block should either preserve Alice's authorship (via move detection)
         // or be attributed to Charlie (if move detection doesn't match)
         // With imara-diff's git-compatible output, this tests the actual move detection
-        assert!(
-            helper_owner.is_some(),
-            "helper text should have an owner"
-        );
+        assert!(helper_owner.is_some(), "helper text should have an owner");
     }
 
     #[test]

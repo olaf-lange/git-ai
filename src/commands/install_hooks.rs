@@ -869,7 +869,7 @@ fn install_gemini_hooks(dry_run: bool) -> Result<Option<String>, GitAiError> {
 
     // Merge desired into existing
     let mut merged = existing.clone();
-    
+
     // Ensure tools.enableHooks is set to true
     if let Some(tools_obj) = merged.get_mut("tools").and_then(|t| t.as_object_mut()) {
         // Only update if not already true
@@ -2599,7 +2599,7 @@ mod tests {
         assert!(is_git_ai_checkpoint_command(
             "git-ai checkpoint --hook-input \"$(cat)\""
         ));
-        
+
         // Gemini commands
         assert!(is_git_ai_checkpoint_command("git-ai checkpoint gemini"));
         assert!(is_git_ai_checkpoint_command(&format!(
@@ -2813,7 +2813,7 @@ mod tests {
         // Verify
         let content: Value =
             serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
-        
+
         // Verify tools.enableHooks is set
         assert_eq!(
             content.get("tools").unwrap().get("enableHooks").unwrap(),
@@ -2899,9 +2899,10 @@ mod tests {
         let before_tool_cmd = format!("git-ai {}", GEMINI_BEFORE_TOOL_CMD);
         let after_tool_cmd = format!("git-ai {}", GEMINI_AFTER_TOOL_CMD);
 
-        for (hook_type, desired_cmd) in
-            &[("BeforeTool", before_tool_cmd), ("AfterTool", after_tool_cmd)]
-        {
+        for (hook_type, desired_cmd) in &[
+            ("BeforeTool", before_tool_cmd),
+            ("AfterTool", after_tool_cmd),
+        ] {
             let hooks_obj = content.get_mut("hooks").unwrap();
             let hook_type_array = hooks_obj
                 .get_mut(*hook_type)

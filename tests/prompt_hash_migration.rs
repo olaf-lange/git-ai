@@ -2,8 +2,8 @@
 mod repos;
 use repos::test_file::ExpectedLineExt;
 use repos::test_repo::TestRepo;
-use std::fs;
 use serde_json::Value;
+use std::fs;
 
 /// Helper function to truncate 16-char prompt hashes to 7 chars in checkpoint files
 fn truncate_checkpoint_hashes(repo: &TestRepo, commit_sha: &str) {
@@ -19,8 +19,7 @@ fn truncate_checkpoint_hashes(repo: &TestRepo, commit_sha: &str) {
         return;
     }
 
-    let content = fs::read_to_string(&checkpoint_file)
-        .expect("Failed to read checkpoint file");
+    let content = fs::read_to_string(&checkpoint_file).expect("Failed to read checkpoint file");
 
     let mut modified_lines = Vec::new();
     for line in content.lines() {
@@ -28,16 +27,20 @@ fn truncate_checkpoint_hashes(repo: &TestRepo, commit_sha: &str) {
             continue;
         }
 
-        let mut checkpoint: Value = serde_json::from_str(line)
-            .expect("Failed to parse checkpoint JSON");
+        let mut checkpoint: Value =
+            serde_json::from_str(line).expect("Failed to parse checkpoint JSON");
 
         // Modify entries in the checkpoint
         if let Some(entries) = checkpoint.get_mut("entries").and_then(|e| e.as_array_mut()) {
             for entry in entries {
                 // Truncate author_ids in attributions
-                if let Some(attributions) = entry.get_mut("attributions").and_then(|a| a.as_array_mut()) {
+                if let Some(attributions) =
+                    entry.get_mut("attributions").and_then(|a| a.as_array_mut())
+                {
                     for attr in attributions {
-                        if let Some(author_id) = attr.get_mut("author_id").and_then(|id| id.as_str()) {
+                        if let Some(author_id) =
+                            attr.get_mut("author_id").and_then(|id| id.as_str())
+                        {
                             if author_id.len() == 16 {
                                 attr["author_id"] = Value::String(author_id[..7].to_string());
                             }
@@ -46,15 +49,22 @@ fn truncate_checkpoint_hashes(repo: &TestRepo, commit_sha: &str) {
                 }
 
                 // Truncate author_ids in line_attributions
-                if let Some(line_attrs) = entry.get_mut("line_attributions").and_then(|a| a.as_array_mut()) {
+                if let Some(line_attrs) = entry
+                    .get_mut("line_attributions")
+                    .and_then(|a| a.as_array_mut())
+                {
                     for line_attr in line_attrs {
-                        if let Some(author_id) = line_attr.get_mut("author_id").and_then(|id| id.as_str()) {
+                        if let Some(author_id) =
+                            line_attr.get_mut("author_id").and_then(|id| id.as_str())
+                        {
                             if author_id.len() == 16 {
                                 line_attr["author_id"] = Value::String(author_id[..7].to_string());
                             }
                         }
                         // Also truncate overrode field if present
-                        if let Some(overrode) = line_attr.get_mut("overrode").and_then(|o| o.as_str()) {
+                        if let Some(overrode) =
+                            line_attr.get_mut("overrode").and_then(|o| o.as_str())
+                        {
                             if overrode.len() == 16 {
                                 line_attr["overrode"] = Value::String(overrode[..7].to_string());
                             }
@@ -64,18 +74,19 @@ fn truncate_checkpoint_hashes(repo: &TestRepo, commit_sha: &str) {
             }
         }
 
-        modified_lines.push(serde_json::to_string(&checkpoint)
-            .expect("Failed to serialize checkpoint"));
+        modified_lines
+            .push(serde_json::to_string(&checkpoint).expect("Failed to serialize checkpoint"));
     }
 
     // Write back the modified checkpoints
     let new_content = modified_lines.join("\n") + "\n";
-    fs::write(&checkpoint_file, new_content)
-        .expect("Failed to write modified checkpoint file");
+    fs::write(&checkpoint_file, new_content).expect("Failed to write modified checkpoint file");
 }
 
 /// Verify that all prompt IDs in an authorship log are 16 chars long
-fn verify_prompt_ids_are_16_chars(authorship_log: &git_ai::authorship::authorship_log_serialization::AuthorshipLog) {
+fn verify_prompt_ids_are_16_chars(
+    authorship_log: &git_ai::authorship::authorship_log_serialization::AuthorshipLog,
+) {
     // Check all prompt IDs in metadata.prompts
     for (prompt_id, _) in &authorship_log.metadata.prompts {
         assert_eq!(
@@ -116,16 +127,15 @@ fn verify_checkpoint_hashes_are_16_chars(repo: &TestRepo, commit_sha: &str) {
         return;
     }
 
-    let content = fs::read_to_string(&checkpoint_file)
-        .expect("Failed to read checkpoint file");
+    let content = fs::read_to_string(&checkpoint_file).expect("Failed to read checkpoint file");
 
     for line in content.lines() {
         if line.trim().is_empty() {
             continue;
         }
 
-        let checkpoint: Value = serde_json::from_str(line)
-            .expect("Failed to parse checkpoint JSON");
+        let checkpoint: Value =
+            serde_json::from_str(line).expect("Failed to parse checkpoint JSON");
 
         if let Some(entries) = checkpoint.get("entries").and_then(|e| e.as_array()) {
             for entry in entries {
@@ -148,9 +158,12 @@ fn verify_checkpoint_hashes_are_16_chars(repo: &TestRepo, commit_sha: &str) {
                 }
 
                 // Check line_attributions
-                if let Some(line_attrs) = entry.get("line_attributions").and_then(|a| a.as_array()) {
+                if let Some(line_attrs) = entry.get("line_attributions").and_then(|a| a.as_array())
+                {
                     for line_attr in line_attrs {
-                        if let Some(author_id) = line_attr.get("author_id").and_then(|id| id.as_str()) {
+                        if let Some(author_id) =
+                            line_attr.get("author_id").and_then(|id| id.as_str())
+                        {
                             // Skip "human" - it's not a hash
                             if author_id != "human" {
                                 assert_eq!(
@@ -325,4 +338,3 @@ fn test_prompt_hash_migration_unstaged_ai_lines_saved_to_working_log() {
         "ai_line7".ai(),
     ]);
 }
-

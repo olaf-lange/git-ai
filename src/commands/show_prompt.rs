@@ -27,7 +27,12 @@ pub fn handle_show_prompt(args: &[String]) {
         }
     };
 
-    match find_prompt(&repo, &parsed.prompt_id, parsed.commit.as_deref(), parsed.offset) {
+    match find_prompt(
+        &repo,
+        &parsed.prompt_id,
+        parsed.commit.as_deref(),
+        parsed.offset,
+    ) {
         Ok((commit_sha, prompt_record)) => {
             // Output the prompt as JSON, including the commit SHA for context
             let output = serde_json::json!({
@@ -203,4 +208,3 @@ fn find_prompt_in_history(
         )))
     }
 }
-

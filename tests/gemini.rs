@@ -16,10 +16,9 @@ use test_utils::fixture_path;
 #[test]
 fn test_parse_example_gemini_json_with_model() {
     let fixture = fixture_path("gemini-session-simple.json");
-    let (transcript, model) = GeminiPreset::transcript_and_model_from_gemini_json(
-        fixture.to_str().unwrap(),
-    )
-    .expect("Failed to parse Gemini JSON");
+    let (transcript, model) =
+        GeminiPreset::transcript_and_model_from_gemini_json(fixture.to_str().unwrap())
+            .expect("Failed to parse Gemini JSON");
 
     // Verify we parsed some messages
     assert!(!transcript.messages().is_empty());
@@ -48,10 +47,9 @@ fn test_parse_example_gemini_json_with_model() {
 #[test]
 fn test_gemini_parses_user_messages() {
     let fixture = fixture_path("gemini-session-simple.json");
-    let (transcript, _model) = GeminiPreset::transcript_and_model_from_gemini_json(
-        fixture.to_str().unwrap(),
-    )
-    .expect("Failed to parse Gemini JSON");
+    let (transcript, _model) =
+        GeminiPreset::transcript_and_model_from_gemini_json(fixture.to_str().unwrap())
+            .expect("Failed to parse Gemini JSON");
 
     // Find user messages
     let user_messages: Vec<&Message> = transcript
@@ -60,25 +58,25 @@ fn test_gemini_parses_user_messages() {
         .filter(|m| matches!(m, Message::User { .. }))
         .collect::<Vec<_>>();
 
-    assert_eq!(user_messages.len(), 1, "Should have exactly one user message");
+    assert_eq!(
+        user_messages.len(),
+        1,
+        "Should have exactly one user message"
+    );
 
     // Verify the user message content
     if let Message::User { text, timestamp } = user_messages[0] {
         assert!(text.contains("add another hello bob console log"));
-        assert_eq!(
-            timestamp.as_ref().unwrap(),
-            "2025-12-06T18:25:18.042Z"
-        );
+        assert_eq!(timestamp.as_ref().unwrap(), "2025-12-06T18:25:18.042Z");
     }
 }
 
 #[test]
 fn test_gemini_parses_assistant_messages() {
     let fixture = fixture_path("gemini-session-simple.json");
-    let (transcript, _model) = GeminiPreset::transcript_and_model_from_gemini_json(
-        fixture.to_str().unwrap(),
-    )
-    .expect("Failed to parse Gemini JSON");
+    let (transcript, _model) =
+        GeminiPreset::transcript_and_model_from_gemini_json(fixture.to_str().unwrap())
+            .expect("Failed to parse Gemini JSON");
 
     // Find assistant messages
     let assistant_messages: Vec<&Message> = transcript
@@ -101,10 +99,9 @@ fn test_gemini_parses_assistant_messages() {
 #[test]
 fn test_gemini_parses_tool_calls() {
     let fixture = fixture_path("gemini-session-simple.json");
-    let (transcript, _model) = GeminiPreset::transcript_and_model_from_gemini_json(
-        fixture.to_str().unwrap(),
-    )
-    .expect("Failed to parse Gemini JSON");
+    let (transcript, _model) =
+        GeminiPreset::transcript_and_model_from_gemini_json(fixture.to_str().unwrap())
+            .expect("Failed to parse Gemini JSON");
 
     // Find tool use messages
     let tool_uses: Vec<&Message> = transcript
@@ -113,10 +110,7 @@ fn test_gemini_parses_tool_calls() {
         .filter(|m| matches!(m, Message::ToolUse { .. }))
         .collect();
 
-    assert!(
-        tool_uses.len() >= 1,
-        "Should have at least one tool call"
-    );
+    assert!(tool_uses.len() >= 1, "Should have at least one tool call");
 
     // Verify tool calls have correct structure
     for tool_use in &tool_uses {
@@ -149,10 +143,9 @@ fn test_gemini_parses_tool_calls() {
 #[test]
 fn test_gemini_parses_tool_call_args() {
     let fixture = fixture_path("gemini-session-simple.json");
-    let (transcript, _model) = GeminiPreset::transcript_and_model_from_gemini_json(
-        fixture.to_str().unwrap(),
-    )
-    .expect("Failed to parse Gemini JSON");
+    let (transcript, _model) =
+        GeminiPreset::transcript_and_model_from_gemini_json(fixture.to_str().unwrap())
+            .expect("Failed to parse Gemini JSON");
 
     // Find a replace tool call
     let replace_tool = transcript
@@ -432,10 +425,7 @@ fn test_gemini_preset_extracts_model() {
     // Verify model is extracted
     assert_eq!(result.agent_id.model, "gemini-2.5-flash");
     assert_eq!(result.agent_id.tool, "gemini");
-    assert_eq!(
-        result.agent_id.id,
-        "18f475c0-690f-4bc9-b84e-88a0a1e9518f"
-    );
+    assert_eq!(result.agent_id.id, "18f475c0-690f-4bc9-b84e-88a0a1e9518f");
 }
 
 #[test]
@@ -480,10 +470,12 @@ fn test_gemini_preset_handles_missing_transcript_path() {
 
     // Should fail because transcript_path is required
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("transcript_path not found"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("transcript_path not found")
+    );
 }
 
 #[test]
@@ -518,10 +510,12 @@ fn test_gemini_preset_handles_missing_session_id() {
 
     // Should fail because session_id is required
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("session_id not found"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("session_id not found")
+    );
 }
 
 #[test]
@@ -570,7 +564,8 @@ fn test_gemini_e2e_with_attribution() {
     repo.stage_all_and_commit("Initial commit").unwrap();
 
     // Simulate Gemini making edits to the file
-    let edited_content = "console.log('Bonjour');\n\nconsole.log('hello world');\nconsole.log('hello bob');\n";
+    let edited_content =
+        "console.log('Bonjour');\n\nconsole.log('hello world');\nconsole.log('hello bob');\n";
     fs::write(&file_path, edited_content).unwrap();
 
     // Run checkpoint with the Gemini session
@@ -755,15 +750,17 @@ fn test_gemini_e2e_with_resync() {
     let temp_session_path = temp_dir.path().join("modified_gemini_session.json");
 
     // Copy the fixture to temp location
-    fs::copy(&fixture_path_original, &temp_session_path)
-        .expect("Failed to copy session file");
+    fs::copy(&fixture_path_original, &temp_session_path).expect("Failed to copy session file");
 
     // Modify the session file to add a new message
     let mut session_content: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&temp_session_path).unwrap()).unwrap();
 
     // Add a new message to simulate updates after checkpoint
-    if let Some(messages) = session_content.get_mut("messages").and_then(|m| m.as_array_mut()) {
+    if let Some(messages) = session_content
+        .get_mut("messages")
+        .and_then(|m| m.as_array_mut())
+    {
         let new_message = json!({
             "id": "new-msg-id",
             "timestamp": "2025-12-06T18:30:00.000Z",
@@ -774,8 +771,11 @@ fn test_gemini_e2e_with_resync() {
         messages.push(new_message);
     }
 
-    fs::write(&temp_session_path, serde_json::to_string_pretty(&session_content).unwrap())
-        .expect("Failed to write modified session");
+    fs::write(
+        &temp_session_path,
+        serde_json::to_string_pretty(&session_content).unwrap(),
+    )
+    .expect("Failed to write modified session");
 
     // Create initial file
     let file_path = repo.path().join("test.ts");
@@ -897,4 +897,3 @@ fn test_gemini_e2e_partial_staging() {
         // ai_line5 is not committed because it's unstaged
     ]);
 }
-

@@ -2,9 +2,9 @@
 mod repos;
 mod test_utils;
 
+use git_ai::authorship::authorship_log::LineRange;
 use repos::test_file::ExpectedLineExt;
 use repos::test_repo::TestRepo;
-use git_ai::authorship::authorship_log::LineRange;
 
 #[test]
 fn test_change_across_commits() {
@@ -20,10 +20,24 @@ fn test_change_across_commits() {
         "".ai(),
         "print_name(\"Michael\")".ai(),
     ]);
-    println!("file: {}", file.lines.iter().map(|line| line.contents.clone()).collect::<Vec<String>>().join("\n"));
+    println!(
+        "file: {}",
+        file.lines
+            .iter()
+            .map(|line| line.contents.clone())
+            .collect::<Vec<String>>()
+            .join("\n")
+    );
 
     let commit = repo.stage_all_and_commit("Initial all AI").unwrap();
-    let initial_ai_entry = commit.authorship_log.attestations.first().unwrap().entries.first().unwrap();
+    let initial_ai_entry = commit
+        .authorship_log
+        .attestations
+        .first()
+        .unwrap()
+        .entries
+        .first()
+        .unwrap();
 
     file.replace_at(4, "    print(f\"Hello, {name.upper()}!\")".ai());
     file.insert_at(4, lines!["    name = name.upper()".human()]);
@@ -33,7 +47,13 @@ fn test_change_across_commits() {
     let file_attestation = commit.authorship_log.attestations.first().unwrap();
     assert_eq!(file_attestation.entries.len(), 1);
 
-    let second_ai_prompt_hash = commit.authorship_log.metadata.prompts.keys().next().unwrap();
+    let second_ai_prompt_hash = commit
+        .authorship_log
+        .metadata
+        .prompts
+        .keys()
+        .next()
+        .unwrap();
     assert_ne!(*second_ai_prompt_hash, initial_ai_entry.hash);
 
     let second_ai_entry = file_attestation.entries.first().unwrap();

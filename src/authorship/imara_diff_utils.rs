@@ -130,10 +130,7 @@ impl<'a, T: Clone + Hash + Eq> TokenSource for SliceTokenSource<'a, T> {
 /// # Returns
 /// A vector of `DiffOp` representing the changes between old and new.
 pub fn capture_diff_slices<T: Hash + Eq + Clone>(old: &[T], new: &[T]) -> Vec<DiffOp> {
-    let input = InternedInput::new(
-        SliceTokenSource::new(old),
-        SliceTokenSource::new(new),
-    );
+    let input = InternedInput::new(SliceTokenSource::new(old), SliceTokenSource::new(new));
     let diff = Diff::compute(Algorithm::Myers, &input);
     hunks_to_diff_ops(&diff, old.len(), new.len())
 }
@@ -348,9 +345,31 @@ mod tests {
         let ops = capture_diff_slices(&old, &new);
 
         assert_eq!(ops.len(), 3);
-        assert!(matches!(ops[0], DiffOp::Equal { old_index: 0, new_index: 0, len: 1 }));
-        assert!(matches!(ops[1], DiffOp::Replace { old_index: 1, old_len: 1, new_index: 1, new_len: 1 }));
-        assert!(matches!(ops[2], DiffOp::Equal { old_index: 2, new_index: 2, len: 1 }));
+        assert!(matches!(
+            ops[0],
+            DiffOp::Equal {
+                old_index: 0,
+                new_index: 0,
+                len: 1
+            }
+        ));
+        assert!(matches!(
+            ops[1],
+            DiffOp::Replace {
+                old_index: 1,
+                old_len: 1,
+                new_index: 1,
+                new_len: 1
+            }
+        ));
+        assert!(matches!(
+            ops[2],
+            DiffOp::Equal {
+                old_index: 2,
+                new_index: 2,
+                len: 1
+            }
+        ));
     }
 
     #[test]
@@ -361,9 +380,30 @@ mod tests {
         let ops = capture_diff_slices(&old, &new);
 
         assert_eq!(ops.len(), 3);
-        assert!(matches!(ops[0], DiffOp::Equal { old_index: 0, new_index: 0, len: 1 }));
-        assert!(matches!(ops[1], DiffOp::Insert { old_index: 1, new_index: 1, new_len: 1 }));
-        assert!(matches!(ops[2], DiffOp::Equal { old_index: 1, new_index: 2, len: 1 }));
+        assert!(matches!(
+            ops[0],
+            DiffOp::Equal {
+                old_index: 0,
+                new_index: 0,
+                len: 1
+            }
+        ));
+        assert!(matches!(
+            ops[1],
+            DiffOp::Insert {
+                old_index: 1,
+                new_index: 1,
+                new_len: 1
+            }
+        ));
+        assert!(matches!(
+            ops[2],
+            DiffOp::Equal {
+                old_index: 1,
+                new_index: 2,
+                len: 1
+            }
+        ));
     }
 
     #[test]
@@ -374,9 +414,30 @@ mod tests {
         let ops = capture_diff_slices(&old, &new);
 
         assert_eq!(ops.len(), 3);
-        assert!(matches!(ops[0], DiffOp::Equal { old_index: 0, new_index: 0, len: 1 }));
-        assert!(matches!(ops[1], DiffOp::Delete { old_index: 1, old_len: 1, new_index: 1 }));
-        assert!(matches!(ops[2], DiffOp::Equal { old_index: 2, new_index: 1, len: 1 }));
+        assert!(matches!(
+            ops[0],
+            DiffOp::Equal {
+                old_index: 0,
+                new_index: 0,
+                len: 1
+            }
+        ));
+        assert!(matches!(
+            ops[1],
+            DiffOp::Delete {
+                old_index: 1,
+                old_len: 1,
+                new_index: 1
+            }
+        ));
+        assert!(matches!(
+            ops[2],
+            DiffOp::Equal {
+                old_index: 2,
+                new_index: 1,
+                len: 1
+            }
+        ));
     }
 
     #[test]

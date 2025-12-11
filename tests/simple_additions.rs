@@ -739,7 +739,7 @@ fn test_large_ai_readme_rewrite_with_no_data_bug() {
     // First commit: Initial human content (exact content from the diff)
     fs::write(
         &file_path,
-        "## A quick demo of Git AI Rewrites\n\ndasdas\n\nHUMAN"
+        "## A quick demo of Git AI Rewrites\n\ndasdas\n\nHUMAN",
     )
     .unwrap();
 
@@ -875,12 +875,19 @@ This project is open source and available for use.
     .unwrap();
 
     // Mark the AI-authored content with mock_ai checkpoint
-    repo.git_ai(&["checkpoint", "mock_ai", "Readme.md"]).unwrap();
+    repo.git_ai(&["checkpoint", "mock_ai", "Readme.md"])
+        .unwrap();
 
-    let commit = repo.stage_all_and_commit("AI rewrites README with set operations docs").unwrap();
+    let commit = repo
+        .stage_all_and_commit("AI rewrites README with set operations docs")
+        .unwrap();
 
     // Verify that the commit has AI attestations
-    assert_eq!(commit.authorship_log.attestations.len(), 1, "Should have exactly one AI attestation");
+    assert_eq!(
+        commit.authorship_log.attestations.len(),
+        1,
+        "Should have exactly one AI attestation"
+    );
 
     // Verify line-by-line attribution for ALL lines
     let mut file = repo.filename("Readme.md");
@@ -1030,7 +1037,8 @@ fn test_deletion_within_a_single_line_attribution() {
     .unwrap();
 
     repo.git_ai(&["checkpoint"]).unwrap();
-    repo.stage_all_and_commit("Initial commit with old constructor").unwrap();
+    repo.stage_all_and_commit("Initial commit with old constructor")
+        .unwrap();
 
     // Second commit: AI removes the _config parameter
     fs::write(
@@ -1085,7 +1093,8 @@ fn test_deletion_of_multiple_lines_by_ai() {
     .unwrap();
 
     repo.git_ai(&["checkpoint"]).unwrap();
-    repo.stage_all_and_commit("Initial commit with old constructor").unwrap();
+    repo.stage_all_and_commit("Initial commit with old constructor")
+        .unwrap();
 
     // Second commit: AI removes the _config parameter
     fs::write(

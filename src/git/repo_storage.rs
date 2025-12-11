@@ -109,7 +109,6 @@ impl RepoStorage {
         Ok(())
     }
 
-
     /* Rewrite Log Persistance */
 
     /// Append a rewrite event to the rewrite log file and return the full log
@@ -349,7 +348,7 @@ impl PersistedWorkingLog {
         // Migrate 7-char prompt hashes to 16-char hashes
         // Step 1: Build mapping from old 7-char hash to new 16-char hash
         let mut old_to_new_hash: HashMap<String, String> = HashMap::new();
-        
+
         for checkpoint in &checkpoints {
             if let Some(agent_id) = &checkpoint.agent_id {
                 let new_hash = generate_short_hash(&agent_id.id, &agent_id.tool);

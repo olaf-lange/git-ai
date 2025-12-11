@@ -2,7 +2,7 @@ use crate::authorship::authorship_log::PromptRecord;
 use crate::authorship::authorship_log_serialization::AuthorshipLog;
 use crate::error::GitAiError;
 use crate::git::refs::get_reference_as_authorship_log_v3;
-use crate::git::repository::{exec_git, Repository};
+use crate::git::repository::{Repository, exec_git};
 use std::collections::HashMap;
 use std::io::IsTerminal;
 
@@ -12,8 +12,8 @@ use std::io::IsTerminal;
 
 #[derive(Debug)]
 pub enum DiffSpec {
-    SingleCommit(String),       // SHA
-    TwoCommit(String, String),  // start..end
+    SingleCommit(String),      // SHA
+    TwoCommit(String, String), // start..end
 }
 
 #[derive(Debug)]
@@ -23,8 +23,8 @@ pub struct DiffHunk {
     pub old_count: u32,
     pub new_start: u32,
     pub new_count: u32,
-    pub deleted_lines: Vec<u32>,  // Absolute line numbers in OLD file
-    pub added_lines: Vec<u32>,    // Absolute line numbers in NEW file
+    pub deleted_lines: Vec<u32>, // Absolute line numbers in OLD file
+    pub added_lines: Vec<u32>,   // Absolute line numbers in NEW file
 }
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone)]
@@ -36,15 +36,15 @@ pub struct DiffLineKey {
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone)]
 pub enum LineSide {
-    Old,  // For deleted lines
-    New,  // For added lines
+    Old, // For deleted lines
+    New, // For added lines
 }
 
 #[derive(Debug, Clone)]
 pub enum Attribution {
-    Ai(String),      // Tool name: "cursor", "claude", etc.
-    Human(String),   // Username
-    NoData,          // No authorship data available
+    Ai(String),    // Tool name: "cursor", "claude", etc.
+    Human(String), // Username
+    NoData,        // No authorship data available
 }
 
 // ============================================================================
@@ -140,7 +140,10 @@ fn resolve_commit(repo: &Repository, rev: &str) -> Result<String, GitAiError> {
         .to_string();
 
     if sha.is_empty() {
-        return Err(GitAiError::Generic(format!("Could not resolve commit: {}", rev)));
+        return Err(GitAiError::Generic(format!(
+            "Could not resolve commit: {}",
+            rev
+        )));
     }
 
     Ok(sha)
@@ -188,7 +191,7 @@ pub fn get_diff_with_line_numbers(
 ) -> Result<Vec<DiffHunk>, GitAiError> {
     let mut args = repo.global_args_for_exec();
     args.push("diff".to_string());
-    args.push("-U0".to_string());  // No context lines, just changes
+    args.push("-U0".to_string()); // No context lines, just changes
     args.push("--no-color".to_string());
     args.push(from.to_string());
     args.push(to.to_string());
@@ -229,8 +232,8 @@ fn parse_hunk_line(line: &str, file_path: &str) -> Result<Option<DiffHunk>, GitA
         return Ok(None);
     }
 
-    let old_part = parts[1];  // e.g., "-10,3" or "-10"
-    let new_part = parts[2];  // e.g., "+15,5" or "+15"
+    let old_part = parts[1]; // e.g., "-10,3" or "-10"
+    let new_part = parts[2]; // e.g., "+15,5" or "+15"
 
     // Parse old part
     let (old_start, old_count) = if old_part.starts_with('-') {
@@ -366,8 +369,8 @@ fn get_line_attribution(
     foreign_prompts_cache: &mut HashMap<String, Option<PromptRecord>>,
 ) -> Attribution {
     if let Some((author, _prompt_hash, prompt)) =
-        log.get_line_attribution(repo, file, line, foreign_prompts_cache) {
-
+        log.get_line_attribution(repo, file, line, foreign_prompts_cache)
+    {
         if let Some(pr) = prompt {
             // AI authorship
             Attribution::Ai(pr.agent_id.tool.clone())
@@ -514,12 +517,7 @@ enum LineType {
     Binary,
 }
 
-fn print_line(
-    line: &str,
-    line_type: LineType,
-    use_color: bool,
-    attribution: Option<&Attribution>,
-) {
+fn print_line(line: &str, line_type: LineType, use_color: bool, attribution: Option<&Attribution>) {
     let annotation = if let Some(attr) = attribution {
         format_attribution(attr)
     } else {
@@ -529,23 +527,23 @@ fn print_line(
     if use_color {
         match line_type {
             LineType::DiffHeader => {
-                println!("\x1b[1m{}\x1b[0m", line);  // Bold
+                println!("\x1b[1m{}\x1b[0m", line); // Bold
             }
             LineType::HunkHeader => {
-                println!("\x1b[36m{}\x1b[0m", line);  // Cyan
+                println!("\x1b[36m{}\x1b[0m", line); // Cyan
             }
             LineType::Addition => {
                 if annotation.is_empty() {
-                    println!("\x1b[32m{}\x1b[0m", line);  // Green
+                    println!("\x1b[32m{}\x1b[0m", line); // Green
                 } else {
-                    println!("\x1b[32m{}\x1b[0m  \x1b[2m{}\x1b[0m", line, annotation);  // Green + dim annotation
+                    println!("\x1b[32m{}\x1b[0m  \x1b[2m{}\x1b[0m", line, annotation); // Green + dim annotation
                 }
             }
             LineType::Deletion => {
                 if annotation.is_empty() {
-                    println!("\x1b[31m{}\x1b[0m", line);  // Red
+                    println!("\x1b[31m{}\x1b[0m", line); // Red
                 } else {
-                    println!("\x1b[31m{}\x1b[0m  \x1b[2m{}\x1b[0m", line, annotation);  // Red + dim annotation
+                    println!("\x1b[31m{}\x1b[0m  \x1b[2m{}\x1b[0m", line, annotation); // Red + dim annotation
                 }
             }
             LineType::Context | LineType::Binary => {

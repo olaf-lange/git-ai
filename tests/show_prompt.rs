@@ -167,5 +167,3 @@ fn show_prompt_with_offset_skips_occurrences() {
         err
     );
 }
-
-

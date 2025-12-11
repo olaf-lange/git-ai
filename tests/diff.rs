@@ -83,10 +83,7 @@ impl DiffLine {
 
 /// Parse all meaningful diff lines from output
 fn parse_diff_output(output: &str) -> Vec<DiffLine> {
-    output
-        .lines()
-        .filter_map(DiffLine::parse)
-        .collect()
+    output.lines().filter_map(DiffLine::parse).collect()
 }
 
 /// Helper to assert a line has expected prefix, content, and attribution
@@ -144,7 +141,9 @@ fn assert_diff_lines_exact(lines: &[DiffLine], expected: &[(&str, &str, Option<&
         lines
     );
 
-    for (i, (line, (exp_prefix, exp_content, exp_attr))) in lines.iter().zip(expected.iter()).enumerate() {
+    for (i, (line, (exp_prefix, exp_content, exp_attr))) in
+        lines.iter().zip(expected.iter()).enumerate()
+    {
         assert_eq!(
             &line.prefix, exp_prefix,
             "Line {} prefix mismatch: expected '{}', got '{}'\nFull line: {:?}",
@@ -154,7 +153,10 @@ fn assert_diff_lines_exact(lines: &[DiffLine], expected: &[(&str, &str, Option<&
         assert!(
             line.content.contains(exp_content),
             "Line {} content mismatch: expected to contain '{}', got '{}'\nFull line: {:?}",
-            i, exp_content, line.content, line
+            i,
+            exp_content,
+            line.content,
+            line
         );
 
         match (exp_attr, &line.attribution) {
@@ -162,7 +164,10 @@ fn assert_diff_lines_exact(lines: &[DiffLine], expected: &[(&str, &str, Option<&
                 assert!(
                     actual_attr.contains(expected_attr),
                     "Line {} attribution mismatch: expected '{}', got '{}'\nFull line: {:?}",
-                    i, expected_attr, actual_attr, line
+                    i,
+                    expected_attr,
+                    actual_attr,
+                    line
                 );
             }
             (Some(expected_attr), None) => {
@@ -213,35 +218,63 @@ fn test_diff_single_commit() {
 
     // Verify exact lines
     // Should have: -Line 2, +Line 2 modified, +Line 3 new, +Line 4 human
-    assert!(lines.len() >= 4, "Should have at least 4 diff lines, got {}: {:?}", lines.len(), lines);
+    assert!(
+        lines.len() >= 4,
+        "Should have at least 4 diff lines, got {}: {:?}",
+        lines.len(),
+        lines
+    );
 
     // Find the deletion of Line 2
-    let line2_deletion = lines.iter().find(|l| l.prefix == "-" && l.content.contains("Line 2"));
+    let line2_deletion = lines
+        .iter()
+        .find(|l| l.prefix == "-" && l.content.contains("Line 2"));
     assert!(line2_deletion.is_some(), "Should have deletion of Line 2");
 
     // Find additions
-    let line2_addition = lines.iter().find(|l| l.prefix == "+" && l.content.contains("Line 2 modified"));
-    assert!(line2_addition.is_some(), "Should have addition of 'Line 2 modified'");
+    let line2_addition = lines
+        .iter()
+        .find(|l| l.prefix == "+" && l.content.contains("Line 2 modified"));
+    assert!(
+        line2_addition.is_some(),
+        "Should have addition of 'Line 2 modified'"
+    );
     if let Some(line) = line2_addition {
         assert!(
-            line.attribution.as_ref().map(|a| a.contains("ai")).unwrap_or(false),
+            line.attribution
+                .as_ref()
+                .map(|a| a.contains("ai"))
+                .unwrap_or(false),
             "Line 2 modified should have AI attribution, got: {:?}",
             line.attribution
         );
     }
 
-    let line3_addition = lines.iter().find(|l| l.prefix == "+" && l.content.contains("Line 3 new"));
-    assert!(line3_addition.is_some(), "Should have addition of 'Line 3 new'");
+    let line3_addition = lines
+        .iter()
+        .find(|l| l.prefix == "+" && l.content.contains("Line 3 new"));
+    assert!(
+        line3_addition.is_some(),
+        "Should have addition of 'Line 3 new'"
+    );
     if let Some(line) = line3_addition {
         assert!(
-            line.attribution.as_ref().map(|a| a.contains("ai")).unwrap_or(false),
+            line.attribution
+                .as_ref()
+                .map(|a| a.contains("ai"))
+                .unwrap_or(false),
             "Line 3 new should have AI attribution, got: {:?}",
             line.attribution
         );
     }
 
-    let line4_addition = lines.iter().find(|l| l.prefix == "+" && l.content.contains("Line 4 human"));
-    assert!(line4_addition.is_some(), "Should have addition of 'Line 4 human'");
+    let line4_addition = lines
+        .iter()
+        .find(|l| l.prefix == "+" && l.content.contains("Line 4 human"));
+    assert!(
+        line4_addition.is_some(),
+        "Should have addition of 'Line 4 human'"
+    );
 }
 
 #[test]
@@ -305,7 +338,7 @@ fn test_diff_shows_ai_attribution() {
     assert_diff_lines_exact(
         &lines,
         &[
-            ("-", "fn old()", None),      // Old line deleted (may have no-data or human)
+            ("-", "fn old()", None),       // Old line deleted (may have no-data or human)
             ("+", "fn new()", Some("ai")), // AI adds fn new()
             ("+", "fn another()", Some("ai")), // AI adds fn another()
         ],
@@ -344,8 +377,14 @@ fn test_diff_shows_human_attribution() {
     assert_diff_line(&lines[2], "+", "fn another()", None);
 
     // Verify both additions have some attribution
-    assert!(lines[1].attribution.is_some(), "First addition should have attribution");
-    assert!(lines[2].attribution.is_some(), "Second addition should have attribution");
+    assert!(
+        lines[1].attribution.is_some(),
+        "First addition should have attribution"
+    );
+    assert!(
+        lines[2].attribution.is_some(),
+        "Second addition should have attribution"
+    );
 }
 
 #[test]
@@ -399,7 +438,7 @@ fn test_diff_initial_commit() {
     assert_diff_lines_exact(
         &lines,
         &[
-            ("+", "Initial line", Some("ai")),  // Only addition with AI attribution
+            ("+", "Initial line", Some("ai")), // Only addition with AI attribution
         ],
     );
 }
@@ -414,11 +453,7 @@ fn test_diff_pure_additions() {
     repo.stage_all_and_commit("Initial").unwrap();
 
     // Add more lines at the end (pure additions)
-    file.set_contents(lines![
-        "Line 1".human(),
-        "Line 2".ai(),
-        "Line 3".ai()
-    ]);
+    file.set_contents(lines!["Line 1".human(), "Line 2".ai(), "Line 3".ai()]);
     let commit = repo.stage_all_and_commit("Add lines").unwrap();
 
     // Run diff
@@ -427,8 +462,14 @@ fn test_diff_pure_additions() {
         .expect("git-ai diff should succeed");
 
     // Should have additions
-    assert!(output.contains("+Line 2") || output.contains("Line 2"), "Should show Line 2 addition");
-    assert!(output.contains("+Line 3") || output.contains("Line 3"), "Should show Line 3 addition");
+    assert!(
+        output.contains("+Line 2") || output.contains("Line 2"),
+        "Should show Line 2 addition"
+    );
+    assert!(
+        output.contains("+Line 3") || output.contains("Line 3"),
+        "Should show Line 3 addition"
+    );
 
     // Should show AI attribution on added lines
     assert!(
@@ -464,14 +505,18 @@ fn test_diff_pure_deletions() {
     let lines = parse_diff_output(&output);
 
     // Verify exact order: 4 deletions in sequence, no additions
-    assert_eq!(lines.len(), 4, "Should have exactly 4 lines (all deletions)");
+    assert_eq!(
+        lines.len(),
+        4,
+        "Should have exactly 4 lines (all deletions)"
+    );
 
     assert_diff_lines_exact(
         &lines,
         &[
             ("-", "Line 1", Some("ai")),
             ("-", "Line 2", Some("ai")),
-            ("-", "Line 3", None),  // Could be human or no-data
+            ("-", "Line 3", None), // Could be human or no-data
             ("-", "Line 4", Some("ai")),
         ],
     );
@@ -483,10 +528,7 @@ fn test_diff_mixed_ai_and_human() {
 
     // Initial commit with AI content
     let mut file = repo.filename("mixed.txt");
-    file.set_contents(lines![
-        "Line 1".ai(),
-        "Line 2".ai()
-    ]);
+    file.set_contents(lines!["Line 1".ai(), "Line 2".ai()]);
     repo.stage_all_and_commit("Initial AI").unwrap();
 
     // Modify with AI changes
@@ -531,10 +573,7 @@ fn test_diff_with_head_ref() {
 
     // Should work with HEAD reference
     assert!(output.contains("diff --git"), "Should contain diff header");
-    assert!(
-        output.contains("head_test.txt"),
-        "Should mention the file"
-    );
+    assert!(output.contains("head_test.txt"), "Should mention the file");
 }
 
 #[test]
@@ -566,8 +605,8 @@ fn test_diff_output_format() {
     assert_diff_lines_exact(
         &lines,
         &[
-            ("-", "old", None),        // Deletion (may have no-data or human)
-            ("+", "new", Some("ai")),  // Addition with AI attribution
+            ("-", "old", None),       // Deletion (may have no-data or human)
+            ("+", "new", Some("ai")), // Addition with AI attribution
         ],
     );
 }
@@ -580,10 +619,7 @@ fn test_diff_error_on_no_args() {
     let result = repo.git_ai(&["diff"]);
 
     // Should fail with error
-    assert!(
-        result.is_err(),
-        "git-ai diff without arguments should fail"
-    );
+    assert!(result.is_err(), "git-ai diff without arguments should fail");
 }
 
 #[test]
@@ -637,17 +673,11 @@ fn test_diff_exact_sequence_verification() {
 
     // Initial commit with 2 lines
     let mut file = repo.filename("sequence.rs");
-    file.set_contents(lines![
-        "fn first() {}".human(),
-        "fn second() {}".ai()
-    ]);
+    file.set_contents(lines!["fn first() {}".human(), "fn second() {}".ai()]);
     repo.stage_all_and_commit("Initial").unwrap();
 
     // Modify: delete first, modify second, add third
-    file.set_contents(lines![
-        "fn second_modified() {}".ai(),
-        "fn third() {}".ai()
-    ]);
+    file.set_contents(lines!["fn second_modified() {}".ai(), "fn third() {}".ai()]);
     let commit = repo.stage_all_and_commit("Complex changes").unwrap();
 
     // Run diff
@@ -663,10 +693,10 @@ fn test_diff_exact_sequence_verification() {
     assert_diff_lines_exact(
         &lines,
         &[
-            ("-", "fn first()", None),              // Delete human line
-            ("-", "fn second()", Some("ai")),       // Delete AI line
+            ("-", "fn first()", None),                 // Delete human line
+            ("-", "fn second()", Some("ai")),          // Delete AI line
             ("+", "fn second_modified()", Some("ai")), // Add AI line
-            ("+", "fn third()", Some("ai")),        // Add AI line
+            ("+", "fn third()", Some("ai")),           // Add AI line
         ],
     );
 }

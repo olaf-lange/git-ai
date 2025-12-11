@@ -75,14 +75,18 @@ impl AgentCheckpointPreset for ClaudePreset {
             std::fs::read_to_string(transcript_path).map_err(|e| GitAiError::IoError(e))?;
 
         // Parse into transcript and extract model
-        let (transcript, model) = match ClaudePreset::transcript_and_model_from_claude_code_jsonl(&jsonl_content) {
-            Ok((transcript, model)) => (transcript, model),
-            Err(e) => {
-                eprintln!("[Warning] Failed to parse Claude JSONL: {e}");
-                // TODO Log error to sentry
-                (crate::authorship::transcript::AiTranscript::new(), Some("unknown".to_string()))
-            }
-        };
+        let (transcript, model) =
+            match ClaudePreset::transcript_and_model_from_claude_code_jsonl(&jsonl_content) {
+                Ok((transcript, model)) => (transcript, model),
+                Err(e) => {
+                    eprintln!("[Warning] Failed to parse Claude JSONL: {e}");
+                    // TODO Log error to sentry
+                    (
+                        crate::authorship::transcript::AiTranscript::new(),
+                        Some("unknown".to_string()),
+                    )
+                }
+            };
 
         // The filename should be a UUID
         let agent_id = AgentId {
@@ -99,9 +103,8 @@ impl AgentCheckpointPreset for ClaudePreset {
             .map(|path| vec![path.to_string()]);
 
         // Store transcript_path in metadata
-        let agent_metadata = HashMap::from([
-            ("transcript_path".to_string(), transcript_path.to_string()),
-        ]);
+        let agent_metadata =
+            HashMap::from([("transcript_path".to_string(), transcript_path.to_string())]);
 
         // Check if this is a PreToolUse event (human checkpoint)
         let hook_event_name = hook_data.get("hook_event_name").and_then(|v| v.as_str());
@@ -139,7 +142,8 @@ impl ClaudePreset {
     pub fn transcript_and_model_from_claude_code_jsonl(
         transcript_path: &str,
     ) -> Result<(AiTranscript, Option<String>), GitAiError> {
-        let jsonl_content = std::fs::read_to_string(transcript_path).map_err(|e| GitAiError::IoError(e))?;
+        let jsonl_content =
+            std::fs::read_to_string(transcript_path).map_err(|e| GitAiError::IoError(e))?;
         let mut transcript = AiTranscript::new();
         let mut model = None;
 
@@ -238,12 +242,16 @@ impl AgentCheckpointPreset for GeminiPreset {
         let session_id = hook_data
             .get("session_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| GitAiError::PresetError("session_id not found in hook_input".to_string()))?;
+            .ok_or_else(|| {
+                GitAiError::PresetError("session_id not found in hook_input".to_string())
+            })?;
 
         let transcript_path = hook_data
             .get("transcript_path")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| GitAiError::PresetError("transcript_path not found in hook_input".to_string()))?;
+            .ok_or_else(|| {
+                GitAiError::PresetError("transcript_path not found in hook_input".to_string())
+            })?;
 
         let _cwd = hook_data
             .get("cwd")
@@ -251,14 +259,18 @@ impl AgentCheckpointPreset for GeminiPreset {
             .ok_or_else(|| GitAiError::PresetError("cwd not found in hook_input".to_string()))?;
 
         // Parse into transcript and extract model
-        let (transcript, model) = match GeminiPreset::transcript_and_model_from_gemini_json(&transcript_path) {
-            Ok((transcript, model)) => (transcript, model),
-            Err(e) => {
-                eprintln!("[Warning] Failed to parse Gemini JSON: {e}");
-                // TODO Log error to sentry
-                (crate::authorship::transcript::AiTranscript::new(), Some("unknown".to_string()))
-            }
-        };
+        let (transcript, model) =
+            match GeminiPreset::transcript_and_model_from_gemini_json(&transcript_path) {
+                Ok((transcript, model)) => (transcript, model),
+                Err(e) => {
+                    eprintln!("[Warning] Failed to parse Gemini JSON: {e}");
+                    // TODO Log error to sentry
+                    (
+                        crate::authorship::transcript::AiTranscript::new(),
+                        Some("unknown".to_string()),
+                    )
+                }
+            };
 
         // The filename should be a UUID
         let agent_id = AgentId {
@@ -275,9 +287,8 @@ impl AgentCheckpointPreset for GeminiPreset {
             .map(|path| vec![path.to_string()]);
 
         // Store transcript_path in metadata
-        let agent_metadata = HashMap::from([
-            ("transcript_path".to_string(), transcript_path.to_string()),
-        ]);
+        let agent_metadata =
+            HashMap::from([("transcript_path".to_string(), transcript_path.to_string())]);
 
         // Check if this is a PreToolUse event (human checkpoint)
         let hook_event_name = hook_data.get("hook_event_name").and_then(|v| v.as_str());
@@ -315,9 +326,10 @@ impl GeminiPreset {
     pub fn transcript_and_model_from_gemini_json(
         transcript_path: &str,
     ) -> Result<(AiTranscript, Option<String>), GitAiError> {
-        let json_content = std::fs::read_to_string(transcript_path).map_err(|e| GitAiError::IoError(e))?;
-        let conversation: serde_json::Value = serde_json::from_str(&json_content)
-            .map_err(|e| GitAiError::JsonError(e))?;
+        let json_content =
+            std::fs::read_to_string(transcript_path).map_err(|e| GitAiError::IoError(e))?;
+        let conversation: serde_json::Value =
+            serde_json::from_str(&json_content).map_err(|e| GitAiError::JsonError(e))?;
 
         let messages = conversation
             .get("messages")
@@ -380,10 +392,9 @@ impl GeminiPreset {
                         for tool_call in tool_calls {
                             if let Some(name) = tool_call.get("name").and_then(|v| v.as_str()) {
                                 // Extract args, defaulting to empty object if not present
-                                let args = tool_call
-                                    .get("args")
-                                    .cloned()
-                                    .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+                                let args = tool_call.get("args").cloned().unwrap_or_else(|| {
+                                    serde_json::Value::Object(serde_json::Map::new())
+                                });
 
                                 let tool_timestamp = tool_call
                                     .get("timestamp")
@@ -425,12 +436,16 @@ impl AgentCheckpointPreset for ContinueCliPreset {
         let session_id = hook_data
             .get("session_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| GitAiError::PresetError("session_id not found in hook_input".to_string()))?;
+            .ok_or_else(|| {
+                GitAiError::PresetError("session_id not found in hook_input".to_string())
+            })?;
 
         let transcript_path = hook_data
             .get("transcript_path")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| GitAiError::PresetError("transcript_path not found in hook_input".to_string()))?;
+            .ok_or_else(|| {
+                GitAiError::PresetError("transcript_path not found in hook_input".to_string())
+            })?;
 
         let _cwd = hook_data
             .get("cwd")
@@ -475,9 +490,8 @@ impl AgentCheckpointPreset for ContinueCliPreset {
             .map(|path| vec![path.to_string()]);
 
         // Store transcript_path in metadata
-        let agent_metadata = HashMap::from([
-            ("transcript_path".to_string(), transcript_path.to_string()),
-        ]);
+        let agent_metadata =
+            HashMap::from([("transcript_path".to_string(), transcript_path.to_string())]);
 
         // Check if this is a PreToolUse event (human checkpoint)
         let hook_event_name = hook_data.get("hook_event_name").and_then(|v| v.as_str());
@@ -515,9 +529,10 @@ impl ContinueCliPreset {
     pub fn transcript_from_continue_json(
         transcript_path: &str,
     ) -> Result<AiTranscript, GitAiError> {
-        let json_content = std::fs::read_to_string(transcript_path).map_err(|e| GitAiError::IoError(e))?;
-        let conversation: serde_json::Value = serde_json::from_str(&json_content)
-            .map_err(|e| GitAiError::JsonError(e))?;
+        let json_content =
+            std::fs::read_to_string(transcript_path).map_err(|e| GitAiError::IoError(e))?;
+        let conversation: serde_json::Value =
+            serde_json::from_str(&json_content).map_err(|e| GitAiError::JsonError(e))?;
 
         let history = conversation
             .get("history")
@@ -581,9 +596,13 @@ impl ContinueCliPreset {
                                     .unwrap_or("unknown");
 
                                 // Parse the arguments JSON string
-                                let args = if let Some(args_str) = function.get("arguments").and_then(|v| v.as_str()) {
+                                let args = if let Some(args_str) =
+                                    function.get("arguments").and_then(|v| v.as_str())
+                                {
                                     serde_json::from_str::<serde_json::Value>(args_str)
-                                        .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
+                                        .unwrap_or_else(|_| {
+                                            serde_json::Value::Object(serde_json::Map::new())
+                                        })
                                 } else {
                                     serde_json::Value::Object(serde_json::Map::new())
                                 };
@@ -697,8 +716,7 @@ impl AgentCheckpointPreset for CursorPreset {
                 "Cursor global state database not found at {:?}. \
                 Make sure Cursor is installed and has been used at least once. \
                 Expected location: {:?}",
-                global_db,
-                global_db,
+                global_db, global_db,
             )));
         }
 
@@ -1077,13 +1095,15 @@ impl AgentCheckpointPreset for GithubCopilotPreset {
                 })
                 .ok_or_else(|| {
                     GitAiError::PresetError(
-                        "will_edit_filepaths is required for before_edit hook_event_name".to_string(),
+                        "will_edit_filepaths is required for before_edit hook_event_name"
+                            .to_string(),
                     )
                 })?;
 
             if will_edit_filepaths.is_empty() {
                 return Err(GitAiError::PresetError(
-                    "will_edit_filepaths cannot be empty for before_edit hook_event_name".to_string(),
+                    "will_edit_filepaths cannot be empty for before_edit hook_event_name"
+                        .to_string(),
                 ));
             }
 
@@ -1110,12 +1130,16 @@ impl AgentCheckpointPreset for GithubCopilotPreset {
             .and_then(|v| v.as_str())
             .or_else(|| hook_data.get("chatSessionPath").and_then(|v| v.as_str()))
             .ok_or_else(|| {
-                GitAiError::PresetError("chat_session_path or chatSessionPath not found in hook_input for after_edit".to_string())
+                GitAiError::PresetError(
+                    "chat_session_path or chatSessionPath not found in hook_input for after_edit"
+                        .to_string(),
+                )
             })?;
 
-        let agent_metadata = HashMap::from([
-            ("chat_session_path".to_string(), chat_session_path.to_string()),
-        ]);
+        let agent_metadata = HashMap::from([(
+            "chat_session_path".to_string(),
+            chat_session_path.to_string(),
+        )]);
 
         // Accept snake_case (new) with fallback to camelCase (old) for backward compatibility
         // Accept either chat_session_id/session_id (new) or chatSessionId/sessionId (old)
@@ -1188,8 +1212,8 @@ impl GithubCopilotPreset {
         }
 
         // Read the session JSON file
-        let session_json_str = std::fs::read_to_string(session_json_path)
-            .map_err(|e| GitAiError::IoError(e))?;
+        let session_json_str =
+            std::fs::read_to_string(session_json_path).map_err(|e| GitAiError::IoError(e))?;
 
         let session_json: serde_json::Value =
             serde_json::from_str(&session_json_str).map_err(|e| GitAiError::JsonError(e))?;
@@ -1470,7 +1494,10 @@ impl AgentCheckpointPreset for AiTabPreset {
 
         let agent_id = AgentId {
             tool,
-            id: format!("ai_tab-{}", completion_id.unwrap_or_else(|| Utc::now().timestamp_millis().to_string())),
+            id: format!(
+                "ai_tab-{}",
+                completion_id.unwrap_or_else(|| Utc::now().timestamp_millis().to_string())
+            ),
             model,
         };
 

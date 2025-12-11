@@ -3,7 +3,9 @@ use crate::authorship::authorship_log_serialization::AuthorshipLog;
 use crate::authorship::stats::{stats_for_commit_stats, write_stats_to_terminal};
 use crate::authorship::virtual_attribution::VirtualAttributions;
 use crate::authorship::working_log::Checkpoint;
-use crate::commands::checkpoint_agent::agent_presets::{ClaudePreset, ContinueCliPreset, CursorPreset, GeminiPreset, GithubCopilotPreset};
+use crate::commands::checkpoint_agent::agent_presets::{
+    ClaudePreset, ContinueCliPreset, CursorPreset, GeminiPreset, GithubCopilotPreset,
+};
 use crate::config::Config;
 use crate::error::GitAiError;
 use crate::git::refs::notes_add;
@@ -214,11 +216,16 @@ fn update_prompts_to_latest(checkpoints: &mut [Checkpoint]) -> Result<(), GitAiE
                     if let Some(metadata) = &checkpoint.agent_metadata {
                         if let Some(transcript_path) = metadata.get("transcript_path") {
                             // Try to read and parse the transcript JSONL
-                            match ClaudePreset::transcript_and_model_from_claude_code_jsonl(transcript_path) {
+                            match ClaudePreset::transcript_and_model_from_claude_code_jsonl(
+                                transcript_path,
+                            ) {
                                 Ok((transcript, model)) => {
                                     // Update to the latest transcript (similar to Cursor behavior)
                                     // This handles both cases: initial load failure and getting latest version
-                                    Some((transcript, model.unwrap_or_else(|| agent_id.model.clone())))
+                                    Some((
+                                        transcript,
+                                        model.unwrap_or_else(|| agent_id.model.clone()),
+                                    ))
                                 }
                                 Err(_e) => {
                                     // TODO Log error to sentry
@@ -239,11 +246,16 @@ fn update_prompts_to_latest(checkpoints: &mut [Checkpoint]) -> Result<(), GitAiE
                     if let Some(metadata) = &checkpoint.agent_metadata {
                         if let Some(transcript_path) = metadata.get("transcript_path") {
                             // Try to read and parse the transcript JSON
-                            match GeminiPreset::transcript_and_model_from_gemini_json(transcript_path) {
+                            match GeminiPreset::transcript_and_model_from_gemini_json(
+                                transcript_path,
+                            ) {
                                 Ok((transcript, model)) => {
                                     // Update to the latest transcript (similar to Cursor behavior)
                                     // This handles both cases: initial load failure and getting latest version
-                                    Some((transcript, model.unwrap_or_else(|| agent_id.model.clone())))
+                                    Some((
+                                        transcript,
+                                        model.unwrap_or_else(|| agent_id.model.clone()),
+                                    ))
                                 }
                                 Err(_e) => {
                                     // TODO Log error to sentry
@@ -264,7 +276,8 @@ fn update_prompts_to_latest(checkpoints: &mut [Checkpoint]) -> Result<(), GitAiE
                     if let Some(metadata) = &checkpoint.agent_metadata {
                         if let Some(transcript_path) = metadata.get("transcript_path") {
                             // Try to read and parse the transcript JSON
-                            match ContinueCliPreset::transcript_from_continue_json(transcript_path) {
+                            match ContinueCliPreset::transcript_from_continue_json(transcript_path)
+                            {
                                 Ok(transcript) => {
                                     // Update to the latest transcript (similar to Cursor behavior)
                                     // This handles both cases: initial load failure and getting latest version

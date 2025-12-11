@@ -1,9 +1,9 @@
 use crate::authorship::attribution_tracker::{Attribution, LineAttribution};
 use crate::authorship::transcript::AiTranscript;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::collections::HashMap;
 
 pub const CHECKPOINT_API_VERSION: &str = "checkpoint/1.0.0";
 

@@ -24,7 +24,7 @@ pub fn pre_reset_hook(parsed_args: &ParsedGitInvocation, repository: &mut Reposi
 
     // Capture HEAD before reset happens
     repository.require_pre_command_head();
-    
+
     // Resolve tree-ish to commit SHA BEFORE the reset happens
     // This is critical because relative refs like HEAD~1 will resolve to different commits after the reset
     let tree_ish = extract_tree_ish(parsed_args);

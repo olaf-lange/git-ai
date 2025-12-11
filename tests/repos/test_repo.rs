@@ -203,25 +203,26 @@ impl TestRepo {
         let binary_path = get_binary_path();
 
         let mut command = Command::new(binary_path);
-        
+
         // If working_dir is provided, use current_dir instead of -C flag
         // This tests that git-ai correctly finds the repository root when run from a subdirectory
         // The working_dir will be canonicalized to ensure it's an absolute path
         if let Some(working_dir_path) = working_dir {
             // Canonicalize to ensure we have an absolute path
-            let absolute_working_dir = working_dir_path.canonicalize()
-                .map_err(|e| format!(
+            let absolute_working_dir = working_dir_path.canonicalize().map_err(|e| {
+                format!(
                     "Failed to canonicalize working directory {}: {}",
                     working_dir_path.display(),
                     e
-                ))?;
+                )
+            })?;
             command.args(args).current_dir(&absolute_working_dir);
         } else {
             let mut full_args = vec!["-C", self.path.to_str().unwrap()];
             full_args.extend(args);
             command.args(&full_args);
         }
-        
+
         command.env("GIT_AI", "git");
 
         // Add config patch as environment variable if present

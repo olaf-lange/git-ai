@@ -48,7 +48,11 @@ fn test_continue_cli_parses_user_messages() {
         .filter(|m| matches!(m, Message::User { .. }))
         .collect::<Vec<_>>();
 
-    assert_eq!(user_messages.len(), 1, "Should have exactly one user message");
+    assert_eq!(
+        user_messages.len(),
+        1,
+        "Should have exactly one user message"
+    );
 
     // Verify the user message content
     if let Message::User { text, .. } = user_messages[0] {
@@ -93,10 +97,7 @@ fn test_continue_cli_parses_tool_calls() {
         .filter(|m| matches!(m, Message::ToolUse { .. }))
         .collect();
 
-    assert!(
-        tool_uses.len() >= 1,
-        "Should have at least one tool call"
-    );
+    assert!(tool_uses.len() >= 1, "Should have at least one tool call");
 
     // Verify tool calls have correct structure
     for tool_use in &tool_uses {
@@ -235,10 +236,7 @@ fn test_continue_cli_preset_extracts_model_from_hook_input() {
     // Verify model is extracted from hook_input
     assert_eq!(result.agent_id.model, "claude-3.5-sonnet");
     assert_eq!(result.agent_id.tool, "continue-cli");
-    assert_eq!(
-        result.agent_id.id,
-        "2dbfd673-096d-4773-b5f3-9023894a7355"
-    );
+    assert_eq!(result.agent_id.id, "2dbfd673-096d-4773-b5f3-9023894a7355");
 }
 
 #[test]
@@ -443,10 +441,12 @@ fn test_continue_cli_preset_handles_missing_transcript_path() {
 
     // Should fail because transcript_path is required
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("transcript_path not found"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("transcript_path not found")
+    );
 }
 
 #[test]
@@ -482,10 +482,12 @@ fn test_continue_cli_preset_handles_missing_session_id() {
 
     // Should fail because session_id is required
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("session_id not found"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("session_id not found")
+    );
 }
 
 #[test]

@@ -1,9 +1,9 @@
 use crate::config::{self, UpdateChannel};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -178,7 +178,8 @@ fn fetch_release_for_channel(
         .send()
         .map_err(|e| format!("Failed to check for updates: {}", e))?;
 
-    let body = response.as_str()
+    let body = response
+        .as_str()
         .map_err(|e| format!("Failed to read response body: {}", e))?;
     let releases: ReleasesResponse = serde_json::from_str(body)
         .map_err(|e| format!("Failed to parse release response: {}", e))?;
@@ -233,18 +234,18 @@ fn run_install_script_for_tag(tag: &str, silent: bool) -> Result<(), String> {
             .ok_or_else(|| "Could not determine home directory".to_string())?
             .join(".git-ai")
             .join("upgrade-logs");
-        
+
         // Ensure the log directory exists
         fs::create_dir_all(&log_dir)
             .map_err(|e| format!("Failed to create log directory: {}", e))?;
-        
+
         let log_file = log_dir.join(format!("upgrade-{}.log", pid));
         let log_path_str = log_file.to_string_lossy().to_string();
-        
+
         // Create an empty log file to ensure it exists
         fs::write(&log_file, format!("Starting upgrade at PID {}\n", pid))
             .map_err(|e| format!("Failed to create log file: {}", e))?;
-        
+
         // PowerShell script that handles its own logging
         // The script captures all output using Start-Transcript
         let ps_script = format!(
@@ -263,18 +264,16 @@ fn run_install_script_for_tag(tag: &str, silent: bool) -> Result<(), String> {
              }} finally {{ \
                  Stop-Transcript | Out-Null; \
              }}",
-            log_path_str,
-            INSTALL_SCRIPT_PS1_URL,
-            INSTALL_SCRIPT_PS1_URL
+            log_path_str, INSTALL_SCRIPT_PS1_URL, INSTALL_SCRIPT_PS1_URL
         );
-        
+
         let mut cmd = Command::new("powershell");
         cmd.arg("-NoProfile")
-           .arg("-ExecutionPolicy")
-           .arg("Bypass")
-           .arg("-Command")
-           .arg(&ps_script)
-           .env(GIT_AI_RELEASE_ENV, tag);
+            .arg("-ExecutionPolicy")
+            .arg("Bypass")
+            .arg("-Command")
+            .arg(&ps_script)
+            .env(GIT_AI_RELEASE_ENV, tag);
 
         // Hide the spawned console to prevent any host/UI bleed-through
         cmd.creation_flags(CREATE_NO_WINDOW);
@@ -286,10 +285,16 @@ fn run_install_script_for_tag(tag: &str, silent: bool) -> Result<(), String> {
         match cmd.spawn() {
             Ok(_) => {
                 if !silent {
-                    println!("\x1b[1;33mNote: The installation is running in the background on Windows.\x1b[0m");
-                    println!("This allows the current git-ai process to exit and release file locks.");
+                    println!(
+                        "\x1b[1;33mNote: The installation is running in the background on Windows.\x1b[0m"
+                    );
+                    println!(
+                        "This allows the current git-ai process to exit and release file locks."
+                    );
                     println!("Check the log file for progress: {}", log_path_str);
-                    println!("The upgrade should complete shortly as long as there are no long-running git or git-ai processes in the background.");
+                    println!(
+                        "The upgrade should complete shortly as long as there are no long-running git or git-ai processes in the background."
+                    );
                 }
                 Ok(())
             }
@@ -319,9 +324,7 @@ fn run_install_script_for_tag(tag: &str, silent: bool) -> Result<(), String> {
                     ))
                 }
             }
-            Err(e) => {
-                Err(format!("Failed to run installation script: {}", e))
-            }
+            Err(e) => Err(format!("Failed to run installation script: {}", e)),
         }
     }
 }
@@ -652,11 +655,17 @@ mod tests {
         let now = current_timestamp();
         let mut cache = UpdateCache::new(UpdateChannel::Latest);
         cache.last_checked_at = now;
-        assert!(!should_check_for_updates(UpdateChannel::Latest, Some(&cache)));
+        assert!(!should_check_for_updates(
+            UpdateChannel::Latest,
+            Some(&cache)
+        ));
 
         let stale_offset = (UPDATE_CHECK_INTERVAL_HOURS * 3600) + 10;
         cache.last_checked_at = now.saturating_sub(stale_offset);
-        assert!(should_check_for_updates(UpdateChannel::Latest, Some(&cache)));
+        assert!(should_check_for_updates(
+            UpdateChannel::Latest,
+            Some(&cache)
+        ));
 
         assert!(should_check_for_updates(UpdateChannel::Latest, None));
     }
@@ -666,10 +675,13 @@ mod tests {
         let now = current_timestamp();
         let mut cache = UpdateCache::new(UpdateChannel::Latest);
         cache.last_checked_at = now;
-        
+
         // Cache matches channel - should respect interval
-        assert!(!should_check_for_updates(UpdateChannel::Latest, Some(&cache)));
-        
+        assert!(!should_check_for_updates(
+            UpdateChannel::Latest,
+            Some(&cache)
+        ));
+
         // Cache doesn't match channel - should check for updates
         assert!(should_check_for_updates(UpdateChannel::Next, Some(&cache)));
     }

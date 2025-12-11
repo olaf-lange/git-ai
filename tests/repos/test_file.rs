@@ -174,7 +174,9 @@ impl<'a> TestFile<'a> {
     /// Helper function to check if an author string indicates AI authorship
     fn is_ai_author_helper(author: &str) -> bool {
         let author_lower = author.to_lowercase();
-        AI_AUTHOR_NAMES.iter().any(|&name| author_lower.contains(name))
+        AI_AUTHOR_NAMES
+            .iter()
+            .any(|&name| author_lower.contains(name))
     }
 
     /// Static version of parse_blame_line for use in from_existing_file

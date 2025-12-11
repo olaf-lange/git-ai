@@ -442,10 +442,12 @@ fn test_copilot_preset_before_edit_requires_will_edit_filepaths() {
 
     // Should fail because will_edit_filepaths is missing
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("will_edit_filepaths is required"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("will_edit_filepaths is required")
+    );
 }
 
 #[test]
@@ -471,10 +473,12 @@ fn test_copilot_preset_before_edit_requires_non_empty_filepaths() {
 
     // Should fail because will_edit_filepaths is empty
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("will_edit_filepaths cannot be empty"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("will_edit_filepaths cannot be empty")
+    );
 }
 
 #[test]
@@ -499,10 +503,12 @@ fn test_copilot_preset_after_edit_requires_session_id() {
 
     // Should fail because chat_session_path is missing for after_edit
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("chat_session_path or chatSessionPath not found"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("chat_session_path or chatSessionPath not found")
+    );
 }
 
 // TODO: Remove this test when all users have updated to the latest VS Code extension
@@ -529,10 +535,12 @@ fn test_copilot_preset_after_edit_requires_session_id_camel_case() {
 
     // Should fail because chatSessionPath is missing for after_edit
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("chat_session_path or chatSessionPath not found"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("chat_session_path or chatSessionPath not found")
+    );
 }
 
 #[test]
@@ -556,7 +564,12 @@ fn test_copilot_preset_invalid_hook_event_name() {
 
     // Should fail with invalid hook event name
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Invalid hook_event_name"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid hook_event_name")
+    );
 }
 
 #[test]
@@ -652,7 +665,9 @@ fn test_copilot_preset_after_edit_camel_case() {
 
     // Create a temporary chat session file
     let mut temp_file = tempfile::NamedTempFile::new().unwrap();
-    temp_file.write_all(r#"{"requests": []}"#.as_bytes()).unwrap();
+    temp_file
+        .write_all(r#"{"requests": []}"#.as_bytes())
+        .unwrap();
     let temp_path = temp_file.path().to_str().unwrap().to_string();
 
     // Test with camelCase (old format) for backward compatibility
@@ -713,7 +728,9 @@ fn test_copilot_preset_after_edit_snake_case() {
 
     // Create a temporary chat session file
     let mut temp_file = tempfile::NamedTempFile::new().unwrap();
-    temp_file.write_all(r#"{"requests": []}"#.as_bytes()).unwrap();
+    temp_file
+        .write_all(r#"{"requests": []}"#.as_bytes())
+        .unwrap();
     let temp_path = temp_file.path().to_str().unwrap().to_string();
 
     // Test with snake_case (new format)

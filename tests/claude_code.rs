@@ -9,8 +9,9 @@ use test_utils::fixture_path;
 #[test]
 fn test_parse_example_claude_code_jsonl_with_model() {
     let fixture = fixture_path("example-claude-code.jsonl");
-    let (transcript, model) = ClaudePreset::transcript_and_model_from_claude_code_jsonl(fixture.to_str().unwrap())
-        .expect("Failed to parse JSONL");
+    let (transcript, model) =
+        ClaudePreset::transcript_and_model_from_claude_code_jsonl(fixture.to_str().unwrap())
+            .expect("Failed to parse JSONL");
 
     // Verify we parsed some messages
     assert!(!transcript.messages().is_empty());

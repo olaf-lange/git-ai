@@ -100,9 +100,7 @@ fn test_checkpoint_with_ignore_prompts_false() {
 
     // Stage and commit the changes
     repo.git(&["add", "-A"]).unwrap();
-    let commit = repo
-        .commit("Add example")
-        .expect("commit should succeed");
+    let commit = repo.commit("Add example").expect("commit should succeed");
 
     // Verify we have the AI prompt in the commit
     assert!(
@@ -153,9 +151,7 @@ fn test_checkpoint_with_ignore_prompts_true_strips_messages() {
 
     // Stage and commit the changes
     repo.git(&["add", "-A"]).unwrap();
-    let commit = repo
-        .commit("Add example")
-        .expect("commit should succeed");
+    let commit = repo.commit("Add example").expect("commit should succeed");
 
     // Verify commit succeeded
     assert!(!commit.commit_sha.is_empty());
@@ -283,9 +279,7 @@ fn test_ignore_prompts_with_empty_transcript() {
     checkpoint_with_empty_transcript(&repo, vec!["example.txt".to_string()]);
 
     repo.git(&["add", "-A"]).unwrap();
-    let commit = repo
-        .commit("Add example")
-        .expect("commit should succeed");
+    let commit = repo.commit("Add example").expect("commit should succeed");
 
     // With empty transcript, there should be a prompt record but with empty messages
     // Note: When transcript is empty, the prompt record may still exist but with no messages
