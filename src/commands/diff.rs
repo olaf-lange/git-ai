@@ -16,7 +16,7 @@ pub enum DiffSpec {
     TwoCommit(String, String), // start..end
 }
 
-enum DiffFormat {
+pub enum DiffFormat {
     Json,
     GitCompatibleTerminal,
 }
@@ -87,7 +87,8 @@ pub fn handle_diff(repo: &Repository, args: &[String]) -> Result<(), GitAiError>
     }
 
     let (spec, format) = parse_diff_args(args)?;
-    execute_diff(repo, spec, format)?;
+    let output = execute_diff(repo, spec, format)?;
+    print!("{}", output);
 
     Ok(())
 }
@@ -132,7 +133,7 @@ pub fn execute_diff(
     repo: &Repository,
     spec: DiffSpec,
     format: DiffFormat,
-) -> Result<(), GitAiError> {
+) -> Result<String, GitAiError> {
     // Resolve commits to get from/to SHAs
     let (from_commit, to_commit) = match spec {
         DiffSpec::TwoCommit(start, end) => {
@@ -156,19 +157,18 @@ pub fn execute_diff(
     let attributions = overlay_diff_attributions(repo, &from_commit, &to_commit, &hunks)?;
 
     // Step 3: Format and output annotated diff
-    match format {
+    let output = match format {
         DiffFormat::Json => {
             let diff_json = build_diff_json(repo, &from_commit, &to_commit, &hunks, &attributions)?;
-            let json_output = serde_json::to_string_pretty(&diff_json)
-                .map_err(|e| GitAiError::Generic(format!("Failed to serialize JSON: {}", e)))?;
-            println!("{}", json_output);
+            serde_json::to_string(&diff_json)
+                .map_err(|e| GitAiError::Generic(format!("Failed to serialize JSON: {}", e)))?
         }
         DiffFormat::GitCompatibleTerminal => {
-            format_annotated_diff(repo, &from_commit, &to_commit, &attributions)?;
+            format_annotated_diff(repo, &from_commit, &to_commit, &attributions)?
         }
-    }
+    };
 
-    Ok(())
+    Ok(output)
 }
 
 // ============================================================================
@@ -657,7 +657,7 @@ pub fn format_annotated_diff(
     from_commit: &str,
     to_commit: &str,
     attributions: &HashMap<DiffLineKey, Attribution>,
-) -> Result<(), GitAiError> {
+) -> Result<String, GitAiError> {
     // Execute git diff with normal context
     let mut args = repo.global_args_for_exec();
     args.push("diff".to_string());
@@ -673,6 +673,7 @@ pub fn format_annotated_diff(
     let use_color = std::io::stdout().is_terminal();
 
     // Parse and annotate diff
+    let mut result = String::new();
     let mut current_file = String::new();
     let mut old_line_num = 0u32;
     let mut new_line_num = 0u32;
@@ -680,24 +681,24 @@ pub fn format_annotated_diff(
     for line in diff_text.lines() {
         if line.starts_with("diff --git") {
             // Diff header
-            print_line(line, LineType::DiffHeader, use_color, None);
+            result.push_str(&format_line(line, LineType::DiffHeader, use_color, None));
             current_file.clear();
             old_line_num = 0;
             new_line_num = 0;
         } else if line.starts_with("index ") {
-            print_line(line, LineType::DiffHeader, use_color, None);
+            result.push_str(&format_line(line, LineType::DiffHeader, use_color, None));
         } else if line.starts_with("--- ") {
-            print_line(line, LineType::DiffHeader, use_color, None);
+            result.push_str(&format_line(line, LineType::DiffHeader, use_color, None));
         } else if line.starts_with("+++ b/") {
             current_file = line[6..].to_string();
-            print_line(line, LineType::DiffHeader, use_color, None);
+            result.push_str(&format_line(line, LineType::DiffHeader, use_color, None));
         } else if line.starts_with("@@ ") {
             // Hunk header - update line counters
             if let Some((old_start, new_start)) = parse_hunk_header_for_line_nums(line) {
                 old_line_num = old_start;
                 new_line_num = new_start;
             }
-            print_line(line, LineType::HunkHeader, use_color, None);
+            result.push_str(&format_line(line, LineType::HunkHeader, use_color, None));
         } else if line.starts_with('-') && !line.starts_with("---") {
             // Deleted line
             let key = DiffLineKey {
@@ -706,7 +707,12 @@ pub fn format_annotated_diff(
                 side: LineSide::Old,
             };
             let attribution = attributions.get(&key);
-            print_line(line, LineType::Deletion, use_color, attribution);
+            result.push_str(&format_line(
+                line,
+                LineType::Deletion,
+                use_color,
+                attribution,
+            ));
             old_line_num += 1;
         } else if line.starts_with('+') && !line.starts_with("+++") {
             // Added line
@@ -716,23 +722,28 @@ pub fn format_annotated_diff(
                 side: LineSide::New,
             };
             let attribution = attributions.get(&key);
-            print_line(line, LineType::Addition, use_color, attribution);
+            result.push_str(&format_line(
+                line,
+                LineType::Addition,
+                use_color,
+                attribution,
+            ));
             new_line_num += 1;
         } else if line.starts_with(' ') {
             // Context line
-            print_line(line, LineType::Context, use_color, None);
+            result.push_str(&format_line(line, LineType::Context, use_color, None));
             old_line_num += 1;
             new_line_num += 1;
         } else if line.starts_with("Binary files") {
             // Binary file marker
-            print_line(line, LineType::Binary, use_color, None);
+            result.push_str(&format_line(line, LineType::Binary, use_color, None));
         } else {
             // Other lines (e.g., "\ No newline at end of file")
-            print_line(line, LineType::Context, use_color, None);
+            result.push_str(&format_line(line, LineType::Context, use_color, None));
         }
     }
 
-    Ok(())
+    Ok(result)
 }
 
 fn parse_hunk_header_for_line_nums(line: &str) -> Option<(u32, u32)> {
@@ -782,7 +793,12 @@ enum LineType {
     Binary,
 }
 
-fn print_line(line: &str, line_type: LineType, use_color: bool, attribution: Option<&Attribution>) {
+fn format_line(
+    line: &str,
+    line_type: LineType,
+    use_color: bool,
+    attribution: Option<&Attribution>,
+) -> String {
     let annotation = if let Some(attr) = attribution {
         format_attribution(attr)
     } else {
@@ -792,35 +808,35 @@ fn print_line(line: &str, line_type: LineType, use_color: bool, attribution: Opt
     if use_color {
         match line_type {
             LineType::DiffHeader => {
-                println!("\x1b[1m{}\x1b[0m", line); // Bold
+                format!("\x1b[1m{}\x1b[0m\n", line) // Bold
             }
             LineType::HunkHeader => {
-                println!("\x1b[36m{}\x1b[0m", line); // Cyan
+                format!("\x1b[36m{}\x1b[0m\n", line) // Cyan
             }
             LineType::Addition => {
                 if annotation.is_empty() {
-                    println!("\x1b[32m{}\x1b[0m", line); // Green
+                    format!("\x1b[32m{}\x1b[0m\n", line) // Green
                 } else {
-                    println!("\x1b[32m{}\x1b[0m  \x1b[2m{}\x1b[0m", line, annotation); // Green + dim annotation
+                    format!("\x1b[32m{}\x1b[0m  \x1b[2m{}\x1b[0m\n", line, annotation) // Green + dim annotation
                 }
             }
             LineType::Deletion => {
                 if annotation.is_empty() {
-                    println!("\x1b[31m{}\x1b[0m", line); // Red
+                    format!("\x1b[31m{}\x1b[0m\n", line) // Red
                 } else {
-                    println!("\x1b[31m{}\x1b[0m  \x1b[2m{}\x1b[0m", line, annotation); // Red + dim annotation
+                    format!("\x1b[31m{}\x1b[0m  \x1b[2m{}\x1b[0m\n", line, annotation) // Red + dim annotation
                 }
             }
             LineType::Context | LineType::Binary => {
-                println!("{}", line);
+                format!("{}\n", line)
             }
         }
     } else {
         // No color
         if annotation.is_empty() {
-            println!("{}", line);
+            format!("{}\n", line)
         } else {
-            println!("{}  {}", line, annotation);
+            format!("{}  {}\n", line, annotation)
         }
     }
 }
