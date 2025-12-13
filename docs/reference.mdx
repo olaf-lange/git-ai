@@ -51,6 +51,9 @@ git-ai diff abc123..def456        # Diff between specific commits
 - `<commit>` - Show diff from this commit's parent to the commit
 - `<commit1>..<commit2>` - Show diff between two commits (standard git range syntax)
 
+**Options:**
+- `--json` - Output the diff in JSON format, with authorship annotations for each line.
+
 **Output Format:**
 
 Each changed line (additions `+` and deletions `-`) is annotated with authorship information:

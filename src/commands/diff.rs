@@ -1,7 +1,9 @@
+use crate::authorship::authorship_log::{LineRange, PromptRecord};
 use crate::commands::blame::GitAiBlameOptions;
 use crate::error::GitAiError;
 use crate::git::repository::{Repository, exec_git};
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize, Serializer};
+use std::collections::{BTreeMap, HashMap};
 use std::io::IsTerminal;
 
 // ============================================================================
@@ -12,6 +14,11 @@ use std::io::IsTerminal;
 pub enum DiffSpec {
     SingleCommit(String),      // SHA
     TwoCommit(String, String), // start..end
+}
+
+enum DiffFormat {
+    Json,
+    GitCompatibleTerminal,
 }
 
 #[derive(Debug)]
@@ -30,6 +37,28 @@ pub struct DiffLineKey {
     pub file: String,
     pub line: u32,
     pub side: LineSide,
+}
+
+/// JSON output format for git-ai diff --json
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiffJson {
+    /// Per-file diff information with annotations
+    pub files: BTreeMap<String, FileDiffJson>,
+    /// Prompt records keyed by prompt hash
+    pub prompts: BTreeMap<String, PromptRecord>,
+}
+
+/// Per-file diff information in JSON output
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileDiffJson {
+    /// Annotations mapping prompt hash to line ranges
+    /// Line ranges are serialized as JSON tuples: [start, end] or single number
+    #[serde(serialize_with = "serialize_annotations")]
+    pub annotations: BTreeMap<String, Vec<LineRange>>,
+    /// The unified diff for this file
+    pub diff: String,
+    /// The base content of the file (before changes)
+    pub base_content: String,
 }
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone)]
@@ -57,8 +86,8 @@ pub fn handle_diff(repo: &Repository, args: &[String]) -> Result<(), GitAiError>
         std::process::exit(1);
     }
 
-    let spec = parse_diff_args(args)?;
-    execute_diff(repo, spec)?;
+    let (spec, format) = parse_diff_args(args)?;
+    execute_diff(repo, spec, format)?;
 
     Ok(())
 }
@@ -67,16 +96,22 @@ pub fn handle_diff(repo: &Repository, args: &[String]) -> Result<(), GitAiError>
 // Argument Parsing
 // ============================================================================
 
-pub fn parse_diff_args(args: &[String]) -> Result<DiffSpec, GitAiError> {
+pub fn parse_diff_args(args: &[String]) -> Result<(DiffSpec, DiffFormat), GitAiError> {
     let arg = &args[0];
+
+    let format = if args.iter().any(|arg| arg == "--json") {
+        DiffFormat::Json
+    } else {
+        DiffFormat::GitCompatibleTerminal
+    };
 
     // Check for commit range (start..end)
     if arg.contains("..") {
         let parts: Vec<&str> = arg.split("..").collect();
         if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
-            return Ok(DiffSpec::TwoCommit(
-                parts[0].to_string(),
-                parts[1].to_string(),
+            return Ok((
+                DiffSpec::TwoCommit(parts[0].to_string(), parts[1].to_string()),
+                format,
             ));
         } else {
             return Err(GitAiError::Generic(
@@ -86,14 +121,18 @@ pub fn parse_diff_args(args: &[String]) -> Result<DiffSpec, GitAiError> {
     }
 
     // Single commit
-    Ok(DiffSpec::SingleCommit(arg.to_string()))
+    Ok((DiffSpec::SingleCommit(arg.to_string()), format))
 }
 
 // ============================================================================
 // Core Execution Logic
 // ============================================================================
 
-pub fn execute_diff(repo: &Repository, spec: DiffSpec) -> Result<(), GitAiError> {
+pub fn execute_diff(
+    repo: &Repository,
+    spec: DiffSpec,
+    format: DiffFormat,
+) -> Result<(), GitAiError> {
     // Resolve commits to get from/to SHAs
     let (from_commit, to_commit) = match spec {
         DiffSpec::TwoCommit(start, end) => {
@@ -117,7 +156,17 @@ pub fn execute_diff(repo: &Repository, spec: DiffSpec) -> Result<(), GitAiError>
     let attributions = overlay_diff_attributions(repo, &from_commit, &to_commit, &hunks)?;
 
     // Step 3: Format and output annotated diff
-    format_annotated_diff(repo, &from_commit, &to_commit, &attributions)?;
+    match format {
+        DiffFormat::Json => {
+            let diff_json = build_diff_json(repo, &from_commit, &to_commit, &hunks, &attributions)?;
+            let json_output = serde_json::to_string_pretty(&diff_json)
+                .map_err(|e| GitAiError::Generic(format!("Failed to serialize JSON: {}", e)))?;
+            println!("{}", json_output);
+        }
+        DiffFormat::GitCompatibleTerminal => {
+            format_annotated_diff(repo, &from_commit, &to_commit, &attributions)?;
+        }
+    }
 
     Ok(())
 }
@@ -337,7 +386,10 @@ pub fn overlay_diff_attributions(
                 for line in &lines {
                     if let Some(author) = line_authors.get(line) {
                         // Check if this author is an AI tool by looking up in prompt_records
-                        let attribution = if prompt_records.values().any(|pr| &pr.agent_id.tool == author) {
+                        let attribution = if prompt_records
+                            .values()
+                            .any(|pr| &pr.agent_id.tool == author)
+                        {
                             Attribution::Ai(author.clone())
                         } else {
                             Attribution::Human(author.clone())
@@ -404,6 +456,196 @@ fn lines_to_ranges(lines: &[u32]) -> Vec<(u32, u32)> {
     ranges.push((start, end));
 
     ranges
+}
+
+// ============================================================================
+// JSON Output Building
+// ============================================================================
+
+/// Build the DiffJson structure for --json output
+fn build_diff_json(
+    repo: &Repository,
+    from_commit: &str,
+    to_commit: &str,
+    hunks: &[DiffHunk],
+    attributions: &HashMap<DiffLineKey, Attribution>,
+) -> Result<DiffJson, GitAiError> {
+    let mut files: BTreeMap<String, FileDiffJson> = BTreeMap::new();
+    let mut all_prompts: BTreeMap<String, PromptRecord> = BTreeMap::new();
+
+    // Get the full diff output and split by file
+    let file_diffs = get_diff_split_by_file(repo, from_commit, to_commit)?;
+
+    // Get unique files from hunks
+    let mut unique_files: Vec<String> = hunks.iter().map(|h| h.file_path.clone()).collect();
+    unique_files.sort();
+    unique_files.dedup();
+
+    // For each file, collect annotations, diff, and base content
+    for file_path in &unique_files {
+        // Get annotations for this file (lines attributed to AI prompts)
+        let file_annotations =
+            collect_file_annotations(repo, from_commit, to_commit, file_path, hunks)?;
+
+        // Merge prompt records into the global map
+        for (hash, prompt_record) in &file_annotations.1 {
+            all_prompts.insert(hash.clone(), prompt_record.clone());
+        }
+
+        // Get the diff for this file
+        let diff = file_diffs.get(file_path).cloned().unwrap_or_default();
+
+        // Get base content (file content at from_commit)
+        let base_content = match repo.get_file_content(file_path, from_commit) {
+            Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
+            Err(_) => String::new(), // File didn't exist in from_commit (new file)
+        };
+
+        files.insert(
+            file_path.clone(),
+            FileDiffJson {
+                annotations: file_annotations.0,
+                diff,
+                base_content,
+            },
+        );
+    }
+
+    Ok(DiffJson {
+        files,
+        prompts: all_prompts,
+    })
+}
+
+/// Get the unified diff split by file path
+fn get_diff_split_by_file(
+    repo: &Repository,
+    from_commit: &str,
+    to_commit: &str,
+) -> Result<HashMap<String, String>, GitAiError> {
+    let mut args = repo.global_args_for_exec();
+    args.push("diff".to_string());
+    args.push("--no-color".to_string());
+    args.push(from_commit.to_string());
+    args.push(to_commit.to_string());
+
+    let output = exec_git(&args)?;
+    let diff_text = String::from_utf8(output.stdout)
+        .map_err(|e| GitAiError::Generic(format!("Failed to parse diff output: {}", e)))?;
+
+    let mut file_diffs: HashMap<String, String> = HashMap::new();
+    let mut current_file = String::new();
+    let mut current_diff = String::new();
+
+    for line in diff_text.lines() {
+        if line.starts_with("diff --git") {
+            // Save previous file's diff if any
+            if !current_file.is_empty() && !current_diff.is_empty() {
+                file_diffs.insert(current_file.clone(), current_diff.clone());
+            }
+            current_diff = format!("{}\n", line);
+            current_file.clear();
+        } else if line.starts_with("+++ b/") {
+            current_file = line[6..].to_string();
+            current_diff.push_str(line);
+            current_diff.push('\n');
+        } else {
+            current_diff.push_str(line);
+            current_diff.push('\n');
+        }
+    }
+
+    // Don't forget the last file
+    if !current_file.is_empty() && !current_diff.is_empty() {
+        file_diffs.insert(current_file, current_diff);
+    }
+
+    Ok(file_diffs)
+}
+
+/// Collect annotations for a specific file, returning (annotations_map, prompt_records_map)
+fn collect_file_annotations(
+    repo: &Repository,
+    from_commit: &str,
+    to_commit: &str,
+    file_path: &str,
+    hunks: &[DiffHunk],
+) -> Result<
+    (
+        BTreeMap<String, Vec<LineRange>>,
+        HashMap<String, PromptRecord>,
+    ),
+    GitAiError,
+> {
+    let mut annotations: BTreeMap<String, Vec<LineRange>> = BTreeMap::new();
+    let mut prompt_records: HashMap<String, PromptRecord> = HashMap::new();
+
+    // Collect all added lines for this file
+    let mut added_lines: Vec<u32> = Vec::new();
+    for hunk in hunks {
+        if hunk.file_path == file_path {
+            added_lines.extend(&hunk.added_lines);
+        }
+    }
+
+    if added_lines.is_empty() {
+        return Ok((annotations, prompt_records));
+    }
+
+    added_lines.sort_unstable();
+    added_lines.dedup();
+    let line_ranges = lines_to_ranges(&added_lines);
+
+    if line_ranges.is_empty() {
+        return Ok((annotations, prompt_records));
+    }
+
+    // Build blame options - use prompt hashes as names to get the actual hash per line
+    let mut options = GitAiBlameOptions::default();
+    options.oldest_commit = Some(from_commit.to_string());
+    options.newest_commit = Some(to_commit.to_string());
+    options.line_ranges = line_ranges;
+    options.no_output = true;
+    options.use_prompt_hashes_as_names = true; // Key: get prompt hash instead of tool name
+
+    // Call blame to get attributions
+    let blame_result = repo.blame(file_path, &options);
+
+    match blame_result {
+        Ok((line_authors, blame_prompt_records)) => {
+            // Group lines by prompt hash
+            // With use_prompt_hashes_as_names=true, line_authors values are the prompt hashes
+            let mut lines_by_hash: HashMap<String, Vec<u32>> = HashMap::new();
+
+            for &line in &added_lines {
+                if let Some(prompt_hash) = line_authors.get(&line) {
+                    // Only include if this hash is in the prompt_records (i.e., it's an AI line)
+                    if blame_prompt_records.contains_key(prompt_hash) {
+                        lines_by_hash
+                            .entry(prompt_hash.clone())
+                            .or_insert_with(Vec::new)
+                            .push(line);
+                    }
+                }
+            }
+
+            // Convert lines to LineRange format and store in annotations
+            for (hash, mut lines) in lines_by_hash {
+                lines.sort_unstable();
+                lines.dedup();
+                let ranges = LineRange::compress_lines(&lines);
+                annotations.insert(hash, ranges);
+            }
+
+            // Store prompt records
+            prompt_records = blame_prompt_records;
+        }
+        Err(_) => {
+            // Blame failed, no annotations for this file
+        }
+    }
+
+    Ok((annotations, prompt_records))
 }
 
 // ============================================================================
@@ -591,20 +833,48 @@ fn format_attribution(attribution: &Attribution) -> String {
     }
 }
 
+/// Custom serializer for annotations that converts LineRange to JSON tuples
+fn serialize_annotations<S>(
+    annotations: &BTreeMap<String, Vec<LineRange>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    use serde::ser::SerializeMap;
+    let mut map = serializer.serialize_map(Some(annotations.len()))?;
+    for (key, ranges) in annotations {
+        let json_ranges: Vec<serde_json::Value> = ranges
+            .iter()
+            .map(|range| match range {
+                LineRange::Single(line) => serde_json::Value::Number((*line).into()),
+                LineRange::Range(start, end) => serde_json::Value::Array(vec![
+                    serde_json::Value::Number((*start).into()),
+                    serde_json::Value::Number((*end).into()),
+                ]),
+            })
+            .collect();
+        map.serialize_entry(key, &json_ranges)?;
+    }
+    map.end()
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
+    use crate::git::find_repository_in_path;
+
     use super::*;
 
     #[test]
     fn test_parse_diff_args_single_commit() {
         let args = vec!["abc123".to_string()];
-        let result = parse_diff_args(&args).unwrap();
+        let (spec, _format) = parse_diff_args(&args).unwrap();
 
-        match result {
+        match spec {
             DiffSpec::SingleCommit(sha) => {
                 assert_eq!(sha, "abc123");
             }
@@ -615,9 +885,9 @@ mod tests {
     #[test]
     fn test_parse_diff_args_commit_range() {
         let args = vec!["abc123..def456".to_string()];
-        let result = parse_diff_args(&args).unwrap();
+        let (spec, _format) = parse_diff_args(&args).unwrap();
 
-        match result {
+        match spec {
             DiffSpec::TwoCommit(start, end) => {
                 assert_eq!(start, "abc123");
                 assert_eq!(end, "def456");
