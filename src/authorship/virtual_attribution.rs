@@ -349,23 +349,26 @@ impl VirtualAttributions {
                         &agent_id.tool,
                     );
                 // For working log checkpoints, use empty string as commit_sha since they're uncommitted
+                // Always overwrite with the latest checkpoint for this agent so refreshed
+                // transcripts/models from post-commit aren't lost.
+                let prompt_record = crate::authorship::authorship_log::PromptRecord {
+                    agent_id: agent_id.clone(),
+                    human_author: human_author.clone(),
+                    messages: checkpoint
+                        .transcript
+                        .as_ref()
+                        .map(|t| t.messages().to_vec())
+                        .unwrap_or_default(),
+                    total_additions: 0,
+                    total_deletions: 0,
+                    accepted_lines: 0,
+                    overriden_lines: 0,
+                };
+
                 prompts
                     .entry(author_id.clone())
                     .or_insert_with(BTreeMap::new)
-                    .entry(String::new())
-                    .or_insert_with(|| crate::authorship::authorship_log::PromptRecord {
-                        agent_id: agent_id.clone(),
-                        human_author: human_author.clone(),
-                        messages: checkpoint
-                            .transcript
-                            .as_ref()
-                            .map(|t| t.messages().to_vec())
-                            .unwrap_or_default(),
-                        total_additions: 0,
-                        total_deletions: 0,
-                        accepted_lines: 0,
-                        overriden_lines: 0,
-                    });
+                    .insert(String::new(), prompt_record);
 
                 // Track additions and deletions from checkpoint line_stats
                 *session_additions.entry(author_id.clone()).or_insert(0) +=
