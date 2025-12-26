@@ -1,3 +1,4 @@
+mod api;
 mod authorship;
 mod ci;
 mod commands;

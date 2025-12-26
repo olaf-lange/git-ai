@@ -24,6 +24,7 @@ pub struct Config {
     disable_auto_updates: bool,
     update_channel: UpdateChannel,
     feature_flags: FeatureFlags,
+    api_base_url: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,6 +77,8 @@ pub struct FileConfig {
     pub update_channel: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feature_flags: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_base_url: Option<String>,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -213,6 +216,11 @@ impl Config {
         &self.feature_flags
     }
 
+    /// Returns the API base URL
+    pub fn api_base_url(&self) -> &str {
+        &self.api_base_url
+    }
+
     /// Override feature flags for testing purposes.
     /// Only available when the `test-support` feature is enabled or in test mode.
     /// Must be `pub` to work with integration tests in the `tests/` directory.
@@ -338,6 +346,13 @@ fn build_config() -> Config {
     // Build feature flags from file config
     let feature_flags = build_feature_flags(&file_cfg);
 
+    // Get API base URL from config, env var, or default
+    let api_base_url = file_cfg
+        .as_ref()
+        .and_then(|c| c.api_base_url.clone())
+        .or_else(|| env::var("GIT_AI_API_BASE_URL").ok())
+        .unwrap_or_else(|| "https://usegitai.com".to_string());
+
     #[cfg(any(test, feature = "test-support"))]
     {
         let mut config = Config {
@@ -351,6 +366,7 @@ fn build_config() -> Config {
             disable_auto_updates,
             update_channel,
             feature_flags,
+            api_base_url,
         };
         apply_test_config_patch(&mut config);
         config
@@ -368,6 +384,7 @@ fn build_config() -> Config {
         disable_auto_updates,
         update_channel,
         feature_flags,
+        api_base_url,
     }
 }
 
@@ -545,6 +562,7 @@ mod tests {
             disable_auto_updates: false,
             update_channel: UpdateChannel::Latest,
             feature_flags: FeatureFlags::default(),
+            api_base_url: "https://usegitai.com".to_string(),
         }
     }
 
@@ -646,6 +664,7 @@ mod tests {
             disable_auto_updates: false,
             update_channel: UpdateChannel::Latest,
             feature_flags: FeatureFlags::default(),
+            api_base_url: "https://usegitai.com".to_string(),
         }
     }
 

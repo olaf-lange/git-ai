@@ -9,6 +9,7 @@ pub mod git_ai_handlers;
 pub mod git_handlers;
 pub mod hooks;
 pub mod install_hooks;
+pub mod share;
 pub mod show;
 pub mod show_prompt;
 pub mod squash_authorship;

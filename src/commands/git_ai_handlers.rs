@@ -98,6 +98,9 @@ pub fn handle_git_ai(args: &[String]) {
         "show-prompt" => {
             commands::show_prompt::handle_show_prompt(&args[1..]);
         }
+        "share" => {
+            commands::share::handle_share(&args[1..]);
+        }
         #[cfg(debug_assertions)]
         "show-transcript" => {
             handle_show_transcript(&args[1..]);
@@ -135,6 +138,8 @@ fn print_help() {
     eprintln!(
         "    --offset <n>          Skip n occurrences (0 = most recent, mutually exclusive with --commit)"
     );
+    eprintln!("  share <id>         Share a prompt by creating a bundle");
+    eprintln!("    --title <title>       Custom title for the bundle (default: auto-generated)");
     eprintln!("  config             View and manage git-ai configuration");
     eprintln!("                        Show all config as formatted JSON");
     eprintln!("    <key>                 Show specific config value (supports dot notation)");

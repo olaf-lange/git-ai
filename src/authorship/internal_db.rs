@@ -6,7 +6,6 @@ use dirs;
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Current schema version (must match MIGRATIONS.len())
 const SCHEMA_VERSION: usize = 1;
@@ -99,6 +98,26 @@ impl PromptDbRecord {
             accepted_lines: None,      // Not yet calculated
             overridden_lines: None,    // Not yet calculated
         })
+    }
+
+    /// Convert PromptDbRecord to PromptRecord
+    pub fn to_prompt_record(&self) -> crate::authorship::authorship_log::PromptRecord {
+        use crate::authorship::authorship_log::PromptRecord;
+        use crate::authorship::working_log::AgentId;
+
+        PromptRecord {
+            agent_id: AgentId {
+                tool: self.tool.clone(),
+                id: self.external_thread_id.clone(),
+                model: self.model.clone(),
+            },
+            human_author: self.human_author.clone(),
+            messages: self.messages.messages.clone(),
+            total_additions: self.total_additions.unwrap_or(0),
+            total_deletions: self.total_deletions.unwrap_or(0),
+            accepted_lines: self.accepted_lines.unwrap_or(0),
+            overriden_lines: self.overridden_lines.unwrap_or(0),
+        }
     }
 }
 

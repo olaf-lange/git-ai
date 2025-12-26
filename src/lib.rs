@@ -1,3 +1,4 @@
+pub mod api;
 pub mod authorship;
 pub mod ci;
 pub mod commands;
