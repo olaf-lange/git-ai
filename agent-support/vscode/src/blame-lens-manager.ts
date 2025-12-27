@@ -1,31 +1,20 @@
 import * as vscode from "vscode";
 import { BlameService, BlameResult, LineBlameInfo } from "./blame-service";
 
-export class BlameLensManager {
+export class BlameLensManager implements vscode.CodeLensProvider {
   private context: vscode.ExtensionContext;
-  private decorationType: vscode.TextEditorDecorationType;
-  private currentDecorations: vscode.Range[] = [];
   private blameService: BlameService;
   private currentBlameResult: BlameResult | null = null;
   private currentDocumentUri: string | null = null;
   private pendingBlameRequest: Promise<BlameResult | null> | null = null;
   private statusBarItem: vscode.StatusBarItem;
   private currentSelection: vscode.Selection | null = null;
+  private _onDidChangeCodeLenses: vscode.EventEmitter<void> = new vscode.EventEmitter<void>();
+  public readonly onDidChangeCodeLenses: vscode.Event<void> = this._onDidChangeCodeLenses.event;
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
     this.blameService = new BlameService();
-
-    // Create decoration type for "View Author" annotation (after line content)
-    this.decorationType = vscode.window.createTextEditorDecorationType({
-      after: {
-        margin: '0 0 0 7em',
-        textDecoration: 'none',
-        color: 'rgba(150,150,150,0.8)',
-        fontStyle: 'italic',
-      },
-      rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
-    });
 
     // Create status bar item for model display
     this.statusBarItem = vscode.window.createStatusBarItem(
@@ -37,6 +26,11 @@ export class BlameLensManager {
   }
 
   public activate(): void {
+    // Register CodeLens provider for all languages
+    this.context.subscriptions.push(
+      vscode.languages.registerCodeLensProvider({ scheme: '*', language: '*' }, this)
+    );
+
     // Register selection change listener
     this.context.subscriptions.push(
       vscode.window.onDidChangeTextEditorSelection((event) => {
@@ -60,7 +54,7 @@ export class BlameLensManager {
       })
     );
 
-    // Handle active editor change to clear decorations when switching documents
+    // Handle active editor change to refresh CodeLens when switching documents
     this.context.subscriptions.push(
       vscode.window.onDidChangeActiveTextEditor((editor) => {
         this.handleActiveEditorChange(editor);
@@ -71,6 +65,13 @@ export class BlameLensManager {
     this.context.subscriptions.push(
       vscode.workspace.onDidSaveTextDocument((document) => {
         this.handleDocumentSave(document);
+      })
+    );
+
+    // Register CodeLens click handler
+    this.context.subscriptions.push(
+      vscode.commands.registerCommand('git-ai.showAuthorDetails', (lineInfo: LineBlameInfo, line: number) => {
+        this.handleCodeLensClick(lineInfo);
       })
     );
 
@@ -85,7 +86,7 @@ export class BlameLensManager {
     // Add status bar item to context subscriptions for proper cleanup
     this.context.subscriptions.push(this.statusBarItem);
 
-    console.log('[git-ai] BlameLensManager activated, status bar item created');
+    console.log('[git-ai] BlameLensManager activated, CodeLens provider registered');
   }
 
   /**
@@ -108,7 +109,7 @@ export class BlameLensManager {
         const selection = activeEditor.selections[0];
         if (selection && selection.start.line !== selection.end.line) {
           // Re-fetch blame with the current selection
-          this.requestBlameAndDecorate(activeEditor, selection);
+          this.requestBlameAndRefresh(activeEditor, selection);
         }
       }
     }
@@ -139,11 +140,10 @@ export class BlameLensManager {
   }
 
   /**
-   * Handle active editor change - clear decorations and reset state.
+   * Handle active editor change - refresh CodeLens and reset state.
    */
   private handleActiveEditorChange(editor: vscode.TextEditor | undefined): void {
-    // Clear decorations from any previous editor
-    this.currentDecorations = [];
+    // Reset selection state
     this.currentSelection = null;
     this.statusBarItem.hide();
     
@@ -153,6 +153,9 @@ export class BlameLensManager {
       this.currentDocumentUri = null;
       this.pendingBlameRequest = null;
     }
+    
+    // Refresh CodeLens for the new editor
+    this._onDidChangeCodeLenses.fire();
   }
 
   private handleSelectionChange(event: vscode.TextEditorSelectionChangeEvent): void {
@@ -166,8 +169,9 @@ export class BlameLensManager {
     });
 
     if (!selection || !editor) {
-      this.clearDecorations(editor);
+      this.currentSelection = null;
       this.updateStatusBarForCurrentLine(editor);
+      this._onDidChangeCodeLenses.fire();
       return;
     }
 
@@ -176,13 +180,15 @@ export class BlameLensManager {
 
     if (isMultiLine) {
       console.log('[git-ai] Multi-line selection detected, requesting blame');
-      // Request blame for this document and apply decorations
-      this.requestBlameAndDecorate(editor, selection);
+      this.currentSelection = selection;
+      // Request blame for this document and refresh CodeLens
+      this.requestBlameAndRefresh(editor, selection);
     } else {
       // Single line - update status bar based on current line
       console.log('[git-ai] Single line selection, updating status bar for line');
+      this.currentSelection = null;
       this.updateStatusBarForCurrentLine(editor);
-      this.clearDecorations(editor);
+      this._onDidChangeCodeLenses.fire();
     }
   }
 
@@ -258,7 +264,7 @@ export class BlameLensManager {
     }
   }
 
-  private async requestBlameAndDecorate(
+  private async requestBlameAndRefresh(
     editor: vscode.TextEditor,
     selection: vscode.Selection
   ): Promise<void> {
@@ -267,12 +273,10 @@ export class BlameLensManager {
 
     // Check if we already have blame for this document
     if (this.currentDocumentUri === documentUri && this.currentBlameResult) {
-      this.applyDecorations(editor, selection, this.currentBlameResult);
+      this._onDidChangeCodeLenses.fire();
+      this.updateStatusBarForSelection(selection, this.currentBlameResult);
       return;
     }
-
-    // Show loading state with "View Author" text initially
-    this.applyDecorations(editor, selection, null);
 
     // Request blame with high priority (current selection)
     try {
@@ -298,7 +302,8 @@ export class BlameLensManager {
         if (currentEditor && currentEditor.document.uri.toString() === documentUri) {
           const currentSelection = currentEditor.selections[0];
           if (currentSelection && currentSelection.start.line !== currentSelection.end.line) {
-            this.applyDecorations(currentEditor, currentSelection, result);
+            this._onDidChangeCodeLenses.fire();
+            this.updateStatusBarForSelection(currentSelection, result);
           }
         }
       }
@@ -308,40 +313,84 @@ export class BlameLensManager {
     }
   }
 
-  private applyDecorations(
-    editor: vscode.TextEditor,
-    selection: vscode.Selection,
-    blameResult: BlameResult | null
-  ): void {
-    const decorations: vscode.DecorationOptions[] = [];
-    this.currentDecorations = [];
-    this.currentSelection = selection;
+  /**
+   * Provide CodeLens for the document.
+   */
+  public provideCodeLenses(
+    document: vscode.TextDocument,
+    token: vscode.CancellationToken
+  ): vscode.CodeLens[] | Thenable<vscode.CodeLens[]> {
+    const codeLenses: vscode.CodeLens[] = [];
 
-    const startLine = Math.min(selection.start.line, selection.end.line);
-    const endLine = Math.max(selection.start.line, selection.end.line);
-
-    // If loading, just show loading on first line
-    if (blameResult === null) {
-      const lineObj = editor.document.lineAt(startLine);
-      const range = new vscode.Range(
-        new vscode.Position(startLine, lineObj.range.end.character),
-        new vscode.Position(startLine, lineObj.range.end.character)
-      );
-      decorations.push({
-        range,
-        renderOptions: { after: { contentText: '' } },
-      });
-      this.currentDecorations.push(range);
-      editor.setDecorations(this.decorationType, decorations);
-      // Show human emoji while loading (default assumption)
-      this.statusBarItem.text = '🧑‍💻';
-      this.statusBarItem.tooltip = 'Loading...';
-      this.statusBarItem.show();
-      return;
+    // Only show CodeLens if there's a multi-line selection
+    if (!this.currentSelection || this.currentSelection.start.line === this.currentSelection.end.line) {
+      return codeLenses;
     }
 
-    // First pass: identify AI hunks and their boundaries
-    const aiHunks = this.identifyAiHunks(blameResult, startLine, endLine);
+    // Only show CodeLens for the current document
+    if (document.uri.toString() !== this.currentDocumentUri) {
+      return codeLenses;
+    }
+
+    // If we don't have blame yet, return empty (we'll refresh when we get it)
+    if (!this.currentBlameResult) {
+      return codeLenses;
+    }
+
+    const startLine = Math.min(this.currentSelection.start.line, this.currentSelection.end.line);
+    const endLine = Math.max(this.currentSelection.start.line, this.currentSelection.end.line);
+
+    // Identify AI hunks within the selection
+    const aiHunks = this.identifyAiHunks(this.currentBlameResult, startLine, endLine);
+
+    // Create CodeLens for each AI hunk
+    for (const hunk of aiHunks) {
+      const lineInfo = this.currentBlameResult.lineAuthors.get(hunk.startLine + 1); // Convert to 1-indexed
+      
+      if (lineInfo?.isAiAuthored) {
+        const tool = lineInfo.author;
+        const model = lineInfo.promptRecord?.agent_id?.model || 'unknown';
+        const humanAuthor = lineInfo.promptRecord?.human_author || '';
+        const humanName = this.extractHumanName(humanAuthor);
+        const lineCount = hunk.endLine - hunk.startLine + 1;
+        const countSuffix = lineCount > 1 ? ` +${lineCount}` : '';
+        
+        const title = `🤖 ${tool}|${model} <${humanName}>${countSuffix}`;
+        
+        const range = new vscode.Range(hunk.startLine, 0, hunk.startLine, 0);
+        const codeLens = new vscode.CodeLens(range, {
+          title: title,
+          command: 'git-ai.showAuthorDetails',
+          arguments: [lineInfo, hunk.startLine]
+        });
+        
+        codeLenses.push(codeLens);
+      }
+    }
+
+    return codeLenses;
+  }
+
+  /**
+   * Resolve CodeLens (optional, but we can use it to lazy-load data if needed).
+   */
+  public resolveCodeLens(
+    codeLens: vscode.CodeLens,
+    token: vscode.CancellationToken
+  ): vscode.CodeLens | Thenable<vscode.CodeLens> {
+    // We've already provided all the info in provideCodeLenses
+    return codeLens;
+  }
+
+  /**
+   * Update status bar based on the current selection.
+   */
+  private updateStatusBarForSelection(
+    selection: vscode.Selection,
+    blameResult: BlameResult
+  ): void {
+    const startLine = Math.min(selection.start.line, selection.end.line);
+    const endLine = Math.max(selection.start.line, selection.end.line);
 
     // Collect unique model names from AI-authored lines
     const modelNames = new Set<string>();
@@ -383,36 +432,6 @@ export class BlameLensManager {
       this.statusBarItem.show();
       console.log('[git-ai] No AI models found in selection, showing human emoji. AI line count:', aiLineCount);
     }
-
-    // Create decorations for first and last lines of each AI hunk
-    for (const hunk of aiHunks) {
-      const lineInfo = blameResult.lineAuthors.get(hunk.startLine + 1); // Convert to 1-indexed
-      
-      // First line: show author info with line count
-      const firstLineObj = editor.document.lineAt(hunk.startLine);
-      const firstRange = new vscode.Range(
-        new vscode.Position(hunk.startLine, firstLineObj.range.end.character),
-        new vscode.Position(hunk.startLine, firstLineObj.range.end.character)
-      );
-      
-      const authorDisplay = this.getAuthorDisplayText(lineInfo, false);
-      const lineCount = hunk.endLine - hunk.startLine + 1;
-      const countSuffix = lineCount > 1 ? ` +${lineCount}` : '';
-      
-      decorations.push({
-        range: firstRange,
-        renderOptions: {
-          after: {
-            contentText: `${authorDisplay}${countSuffix}`,
-          },
-        },
-      });
-      this.currentDecorations.push(firstRange);
-      
-     
-    }
-
-    editor.setDecorations(this.decorationType, decorations);
   }
 
   /**
@@ -560,13 +579,15 @@ export class BlameLensManager {
     return hunks;
   }
 
-  private clearDecorations(editor: vscode.TextEditor | undefined): void {
-    if (editor) {
-      editor.setDecorations(this.decorationType, []);
-    }
-    this.currentDecorations = [];
-    this.currentSelection = null;
-    // Don't hide status bar here - let updateStatusBarForCurrentLine handle it
+  /**
+   * Handle CodeLens click - show author details.
+   */
+  private handleCodeLensClick(lineInfo: LineBlameInfo): void {
+    const hoverContent = this.buildHoverContent(lineInfo);
+    const mdString = hoverContent.value;
+    
+    // Show the markdown content as an information message
+    vscode.window.showInformationMessage(mdString, { modal: false });
   }
 
   private provideHover(
@@ -574,19 +595,27 @@ export class BlameLensManager {
     position: vscode.Position,
     token: vscode.CancellationToken
   ): vscode.Hover | undefined {
-    // Check if the hover position is near any of our current decorations
-    for (const decorationRange of this.currentDecorations) {
-      if (decorationRange.contains(position) || 
-          (position.line === decorationRange.start.line && 
-           position.character >= decorationRange.start.character)) {
-        
-        // Get blame info for this line (1-indexed)
-        const gitLine = position.line + 1;
-        const lineInfo = this.currentBlameResult?.lineAuthors.get(gitLine);
-        
-        const hoverContent = this.buildHoverContent(lineInfo);
-        return new vscode.Hover(hoverContent);
-      }
+    // Only provide hover if we have a multi-line selection and blame data
+    if (!this.currentSelection || !this.currentBlameResult) {
+      return undefined;
+    }
+
+    // Check if the hover position is within the current selection
+    const startLine = Math.min(this.currentSelection.start.line, this.currentSelection.end.line);
+    const endLine = Math.max(this.currentSelection.start.line, this.currentSelection.end.line);
+    
+    if (position.line < startLine || position.line > endLine) {
+      return undefined;
+    }
+
+    // Get blame info for this line (1-indexed)
+    const gitLine = position.line + 1;
+    const lineInfo = this.currentBlameResult.lineAuthors.get(gitLine);
+    
+    // Only show hover for AI-authored lines
+    if (lineInfo?.isAiAuthored) {
+      const hoverContent = this.buildHoverContent(lineInfo);
+      return new vscode.Hover(hoverContent);
     }
 
     return undefined;
@@ -677,9 +706,9 @@ export class BlameLensManager {
   }
 
   public dispose(): void {
-    this.decorationType.dispose();
     this.blameService.dispose();
     this.statusBarItem.dispose();
+    this._onDidChangeCodeLenses.dispose();
   }
 }
 
