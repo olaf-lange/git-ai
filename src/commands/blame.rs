@@ -335,7 +335,7 @@ impl Repository {
         }
 
         // Step 2: Overlay AI authorship information
-        let (line_authors, prompt_records) =
+        let (line_authors, prompt_records, authorship_logs, prompt_commits) =
             overlay_ai_authorship(self, &all_blame_hunks, &relative_file_path, &options)?;
 
         if options.no_output {
@@ -344,7 +344,13 @@ impl Repository {
 
         // Output based on format
         if options.json {
-            output_json_format(&line_authors, &prompt_records)?;
+            output_json_format(
+                &line_authors,
+                &prompt_records,
+                &authorship_logs,
+                &prompt_commits,
+                &relative_file_path,
+            )?;
         } else if options.porcelain || options.line_porcelain {
             output_porcelain_format(
                 self,
@@ -673,9 +679,19 @@ fn overlay_ai_authorship(
     blame_hunks: &[BlameHunk],
     file_path: &str,
     options: &GitAiBlameOptions,
-) -> Result<(HashMap<u32, String>, HashMap<String, PromptRecord>), GitAiError> {
+) -> Result<
+    (
+        HashMap<u32, String>,
+        HashMap<String, PromptRecord>,
+        Vec<AuthorshipLog>,
+        HashMap<String, Vec<String>>, // prompt_hash -> commit_shas
+    ),
+    GitAiError,
+> {
     let mut line_authors: HashMap<u32, String> = HashMap::new();
     let mut prompt_records: HashMap<String, PromptRecord> = HashMap::new();
+    // Track which commits contain each prompt hash
+    let mut prompt_commits: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
 
     // Group hunks by commit SHA to avoid repeated lookups
     let mut commit_authorship_cache: HashMap<String, Option<AuthorshipLog>> = HashMap::new();
@@ -714,6 +730,11 @@ fn overlay_ai_authorship(
                     // If this line is AI-assisted, display the tool name; otherwise the human username
                     if let Some(prompt_record) = prompt {
                         let prompt_hash = prompt_hash.unwrap();
+                        // Track that this prompt hash appears in this commit
+                        prompt_commits
+                            .entry(prompt_hash.clone())
+                            .or_insert_with(std::collections::HashSet::new)
+                            .insert(hunk.commit_sha.clone());
                         if options.use_prompt_hashes_as_names {
                             line_authors.insert(current_line_num, prompt_hash.clone());
                         } else {
@@ -753,19 +774,84 @@ fn overlay_ai_authorship(
         }
     }
 
-    Ok((line_authors, prompt_records))
+    // Collect all authorship logs we've seen (for JSON output to find other files)
+    let authorship_logs: Vec<AuthorshipLog> = commit_authorship_cache
+        .into_iter()
+        .filter_map(|(_, log)| log)
+        .collect();
+
+    // Convert HashSet to Vec and sort for deterministic output
+    let prompt_commits_vec: HashMap<String, Vec<String>> = prompt_commits
+        .into_iter()
+        .map(|(hash, commits)| {
+            let mut commits_vec: Vec<String> = commits.into_iter().collect();
+            commits_vec.sort();
+            (hash, commits_vec)
+        })
+        .collect();
+
+    Ok((
+        line_authors,
+        prompt_records,
+        authorship_logs,
+        prompt_commits_vec,
+    ))
 }
 
 /// JSON output structure for blame
 #[derive(Debug, Serialize)]
 struct JsonBlameOutput {
     lines: std::collections::BTreeMap<String, String>,
-    prompts: HashMap<String, PromptRecord>,
+    prompts: HashMap<String, PromptRecordWithOtherFiles>,
+}
+
+/// Read model that patches PromptRecord with other_files and commits fields
+#[derive(Debug, Serialize)]
+struct PromptRecordWithOtherFiles {
+    #[serde(flatten)]
+    prompt_record: PromptRecord,
+    other_files: Vec<String>,
+    commits: Vec<String>,
+}
+
+/// Helper function to get all files touched by a prompt hash across authorship logs
+fn get_files_for_prompt_hash(
+    prompt_hash: &str,
+    authorship_logs: &[AuthorshipLog],
+    exclude_file: &str,
+) -> Vec<String> {
+    let mut files = std::collections::HashSet::new();
+
+    for log in authorship_logs {
+        for file_attestation in &log.attestations {
+            // Skip the file we're currently blaming
+            if file_attestation.file_path == exclude_file {
+                continue;
+            }
+
+            // Check if any entry in this file has the prompt hash
+            let has_hash = file_attestation
+                .entries
+                .iter()
+                .any(|entry| entry.hash == prompt_hash);
+
+            if has_hash {
+                files.insert(file_attestation.file_path.clone());
+            }
+        }
+    }
+
+    let mut file_vec: Vec<String> = files.into_iter().collect();
+    file_vec.sort();
+    file_vec
 }
 
 fn output_json_format(
     line_authors: &HashMap<u32, String>,
     prompt_records: &HashMap<String, PromptRecord>,
+    authorship_logs: &[AuthorshipLog],
+    prompt_commits: &HashMap<String, Vec<String>>,
+    current_file: &str,
 ) -> Result<(), GitAiError> {
     // Filter to only AI lines (where author is a prompt_id in prompt_records)
     let mut ai_lines: Vec<(u32, String)> = line_authors
@@ -816,10 +902,23 @@ fn output_json_format(
 
     // Only include prompts that are actually referenced in lines
     let referenced_prompt_ids: std::collections::HashSet<&String> = lines_map.values().collect();
-    let filtered_prompts: HashMap<String, PromptRecord> = prompt_records
+
+    // Create read models with other_files and commits populated
+    let filtered_prompts: HashMap<String, PromptRecordWithOtherFiles> = prompt_records
         .iter()
         .filter(|(k, _)| referenced_prompt_ids.contains(k))
-        .map(|(k, v)| (k.clone(), v.clone()))
+        .map(|(k, v)| {
+            let other_files = get_files_for_prompt_hash(k, authorship_logs, current_file);
+            let commits = prompt_commits.get(k).cloned().unwrap_or_default();
+            (
+                k.clone(),
+                PromptRecordWithOtherFiles {
+                    prompt_record: v.clone(),
+                    other_files,
+                    commits,
+                },
+            )
+        })
         .collect();
 
     let output = JsonBlameOutput {

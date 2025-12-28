@@ -24,6 +24,7 @@ export interface PromptRecord {
   total_deletions?: number;
   accepted_lines?: number;
   overriden_lines?: number;
+  other_files?: string[];
 }
 
 export interface LineBlameInfo {

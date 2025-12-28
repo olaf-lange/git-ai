@@ -851,7 +851,18 @@ export class BlameLensManager implements vscode.CodeLensProvider {
    * Handle CodeLens click - open virtual tab with markdown content.
    */
   private async handleCodeLensClick(lineInfo: LineBlameInfo): Promise<void> {
-    const hoverContent = this.buildHoverContent(lineInfo);
+    // Get document URI from current document or active editor
+    let documentUri: vscode.Uri | undefined;
+    if (this.currentDocumentUri) {
+      documentUri = vscode.Uri.parse(this.currentDocumentUri);
+    } else {
+      const activeEditor = vscode.window.activeTextEditor;
+      if (activeEditor) {
+        documentUri = activeEditor.document.uri;
+      }
+    }
+    
+    const hoverContent = this.buildHoverContent(lineInfo, documentUri);
     const mdString = hoverContent.value;
     
     // Generate a unique ID for this content (using commit hash + timestamp for uniqueness)
@@ -904,7 +915,7 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     
     // Only show hover for AI-authored lines
     if (lineInfo?.isAiAuthored) {
-      const hoverContent = this.buildHoverContent(lineInfo);
+      const hoverContent = this.buildHoverContent(lineInfo, document.uri);
       return new vscode.Hover(hoverContent);
     }
 
@@ -915,7 +926,7 @@ export class BlameLensManager implements vscode.CodeLensProvider {
    * Build hover content showing author details.
    * Shows a polished chat-style conversation view with clear visual hierarchy.
    */
-  private buildHoverContent(lineInfo: LineBlameInfo | undefined): vscode.MarkdownString {
+  private buildHoverContent(lineInfo: LineBlameInfo | undefined, documentUri?: vscode.Uri): vscode.MarkdownString {
     const md = new vscode.MarkdownString();
     md.isTrusted = true;
     md.supportHtml = true;
@@ -1031,8 +1042,40 @@ export class BlameLensManager implements vscode.CodeLensProvider {
       md.appendMarkdown(`✅ **+${acceptedLines} accepted lines**\n\n`);
     }
 
-    // Other files section (placeholder)
-    md.appendMarkdown(`📁 **Other files:** *coming soon*\n`);
+    // Other files section - show as clickable links
+    const otherFiles = record?.other_files;
+    if (otherFiles && otherFiles.length > 0) {
+      md.appendMarkdown(`📁 **Other files:**\n\n`);
+      
+      // Get workspace folder to resolve relative paths
+      let workspaceFolder: vscode.WorkspaceFolder | undefined;
+      if (documentUri) {
+        workspaceFolder = vscode.workspace.getWorkspaceFolder(documentUri);
+      }
+      
+      for (const filePath of otherFiles) {
+        // Construct file URI - filePath is relative to repo root
+        let fileUri: vscode.Uri;
+        if (workspaceFolder) {
+          // Resolve relative to workspace folder
+          fileUri = vscode.Uri.joinPath(workspaceFolder.uri, filePath);
+        } else if (documentUri) {
+          // Fallback: try to resolve relative to current document's directory
+          const docDir = vscode.Uri.joinPath(documentUri, '..');
+          fileUri = vscode.Uri.joinPath(docDir, filePath);
+        } else {
+          // Last resort: assume it's relative to workspace root
+          // This might not work, but it's better than nothing
+          fileUri = vscode.Uri.file(filePath);
+        }
+        
+        // Create clickable link using command URI to open the file
+        // Format: command:commandId?[encodeURIComponent(JSON.stringify([args]))]
+        const commandArgs = encodeURIComponent(JSON.stringify([fileUri.toString()]));
+        md.appendMarkdown(`- [${filePath}](command:vscode.open?${commandArgs})\n`);
+      }
+      md.appendMarkdown('\n');
+    }
 
     return md;
   }
@@ -1140,7 +1183,7 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     }
 
     // Build hover content
-    const hoverContent = this.buildHoverContent(firstAiLineInfo);
+    const hoverContent = this.buildHoverContent(firstAiLineInfo, editor.document.uri);
     
     // Show the hover content using VS Code's markdown rendering
     // We'll create a hover at the first AI line position
