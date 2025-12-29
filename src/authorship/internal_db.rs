@@ -213,41 +213,6 @@ impl PromptDbRecord {
         let years = days / 365;
         format!("{} year{} ago", years, if years == 1 { "" } else { "s" })
     }
-
-    /// Compute branch name from commit_sha using git API
-    /// Returns None if no commit_sha or no branch found
-    /// Favors default branches (main, master) over others
-    pub fn compute_branch(&self, repo: &crate::git::repository::Repository) -> Option<String> {
-        use crate::git::repository::exec_git;
-
-        let commit_sha = self.commit_sha.as_ref()?;
-
-        // Use git for-each-ref to find branches containing this commit
-        let mut args = repo.global_args_for_exec();
-        args.push("for-each-ref".to_string());
-        args.push("--points-at".to_string());
-        args.push(commit_sha.clone());
-        args.push("--format=%(refname:short)".to_string());
-        args.push("refs/heads/".to_string());
-
-        let output = exec_git(&args).ok()?;
-        let output_str = String::from_utf8(output.stdout).ok()?;
-        let branches: Vec<&str> = output_str.lines().collect();
-
-        if branches.is_empty() {
-            return None;
-        }
-
-        // Favor default branches (main, master)
-        for branch in &branches {
-            if *branch == "main" || *branch == "master" {
-                return Some(branch.to_string());
-            }
-        }
-
-        // Return first branch found
-        Some(branches[0].to_string())
-    }
 }
 
 /// CAS sync queue record

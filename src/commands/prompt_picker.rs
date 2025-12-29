@@ -45,8 +45,6 @@ struct PromptPickerState {
     batch_size: usize,
     /// Current working directory (for repo filtering)
     current_workdir: Option<String>,
-    /// Repository reference (for branch computation)
-    repo: Option<Repository>,
     /// Title to display
     title: String,
 }
@@ -74,7 +72,6 @@ impl PromptPickerState {
             has_more: true,
             batch_size: 50,
             current_workdir,
-            repo,
             title,
         };
 
@@ -428,16 +425,8 @@ fn render_prompt_list(f: &mut Frame, area: Rect, state: &PromptPickerState) {
             let snippet = prompt.first_message_snippet(80);
             let time = prompt.relative_time();
             let count = prompt.message_count();
-            let branch = state
-                .repo
-                .as_ref()
-                .and_then(|r| prompt.compute_branch(r));
 
-            let info_line = if let Some(branch) = branch {
-                format!("  {} · {} messages · {}", time, count, branch)
-            } else {
-                format!("  {} · {} messages", time, count)
-            };
+            let info_line = format!("  {} · {} messages", time, count);
 
             let lines = vec![
                 Line::from(snippet),
