@@ -245,6 +245,112 @@ impl ClaudePreset {
     }
 }
 
+impl Discoverable for ClaudePreset {
+    fn discover_conversations(since: Option<i64>) -> DiscoveryResult {
+        let mut result = DiscoveryResult::default();
+
+        // Get ~/.claude/projects/ directory
+        let projects_dir = match dirs::home_dir() {
+            Some(home) => home.join(".claude").join("projects"),
+            None => {
+                result.errors.push("Could not determine home directory".to_string());
+                return result;
+            }
+        };
+
+        if !projects_dir.exists() {
+            result.errors.push("Claude projects directory not found".to_string());
+            return result;
+        }
+
+        // Iterate through project subdirectories
+        let project_dirs = match std::fs::read_dir(&projects_dir) {
+            Ok(entries) => entries,
+            Err(e) => {
+                result.errors.push(format!("Failed to read projects directory: {}", e));
+                return result;
+            }
+        };
+
+        for project_dir_entry in project_dirs {
+            let project_dir = match project_dir_entry {
+                Ok(entry) => entry,
+                Err(e) => {
+                    result.errors.push(format!("Failed to read directory entry: {}", e));
+                    continue;
+                }
+            };
+
+            // Skip if not a directory
+            if !project_dir.path().is_dir() {
+                continue;
+            }
+
+            let dir_name = project_dir.file_name();
+            let dir_name_str = dir_name.to_string_lossy();
+
+            // Decode project directory name to get workdir hint
+            let workdir_hint = decode_claude_project_directory(&dir_name_str);
+            let workdir = workdir_hint.and_then(|path| resolve_workdir(&path));
+
+            // Glob for *.jsonl files in this project directory
+            let jsonl_files = match std::fs::read_dir(project_dir.path()) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    result.errors.push(format!("Failed to read project directory: {}", e));
+                    continue;
+                }
+            };
+
+            for file_entry in jsonl_files {
+                let file = match file_entry {
+                    Ok(entry) => entry,
+                    Err(e) => {
+                        result.errors.push(format!("Failed to read file entry: {}", e));
+                        continue;
+                    }
+                };
+
+                let file_path = file.path();
+
+                // Check if it's a .jsonl file
+                if file_path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                    continue;
+                }
+
+                // Extract UUID from filename (stem)
+                let uuid = match file_path.file_stem().and_then(|s| s.to_str()) {
+                    Some(stem) => stem.to_string(),
+                    None => continue,
+                };
+
+                let transcript_path = file_path.to_string_lossy().to_string();
+
+                // Create agent_metadata with transcript_path
+                let mut agent_metadata = HashMap::new();
+                agent_metadata.insert("transcript_path".to_string(), transcript_path);
+
+                // Create DiscoveredConversation
+                result.conversations.push(DiscoveredConversation {
+                    tool: "claude".to_string(),
+                    id: uuid,
+                    workdir: workdir.clone(),
+                    created_at: None,  // Could peek at first line, but expensive
+                    updated_at: None,
+                    model: None,       // Will be extracted during import
+                    agent_metadata,
+                });
+            }
+        }
+
+        result
+    }
+
+    fn tool_name() -> &'static str {
+        "claude"
+    }
+}
+
 pub struct GeminiPreset;
 
 impl AgentCheckpointPreset for GeminiPreset {
@@ -662,6 +768,112 @@ impl ContinueCliPreset {
     }
 }
 
+impl Discoverable for ContinueCliPreset {
+    fn discover_conversations(since: Option<i64>) -> DiscoveryResult {
+        let mut result = DiscoveryResult::default();
+
+        // Get ~/.continue/sessions/sessions.json
+        let sessions_index = match dirs::home_dir() {
+            Some(home) => home.join(".continue").join("sessions").join("sessions.json"),
+            None => {
+                result.errors.push("Could not determine home directory".to_string());
+                return result;
+            }
+        };
+
+        if !sessions_index.exists() {
+            result.errors.push("Continue sessions.json not found".to_string());
+            return result;
+        }
+
+        // Read and parse sessions.json
+        let sessions_content = match std::fs::read_to_string(&sessions_index) {
+            Ok(content) => content,
+            Err(e) => {
+                result.errors.push(format!("Failed to read sessions.json: {}", e));
+                return result;
+            }
+        };
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct SessionMetadata {
+            session_id: String,
+            workspace_directory: Option<String>,
+            date_created: i64,  // Unix timestamp in milliseconds
+        }
+
+        let sessions: Vec<SessionMetadata> = match serde_json::from_str(&sessions_content) {
+            Ok(sessions) => sessions,
+            Err(e) => {
+                result.errors.push(format!("Failed to parse sessions.json: {}", e));
+                return result;
+            }
+        };
+
+        // Get sessions directory for building transcript paths
+        let sessions_dir = match dirs::home_dir() {
+            Some(home) => home.join(".continue").join("sessions"),
+            None => {
+                result.errors.push("Could not determine home directory".to_string());
+                return result;
+            }
+        };
+
+        for session in sessions {
+            // If since is provided, filter by dateCreated (Unix ms)
+            if let Some(since_ts) = since {
+                let session_ts = session.date_created / 1000;  // Convert ms to sec
+                if session_ts < since_ts {
+                    continue;  // Skip old sessions
+                }
+            }
+
+            // Build transcript path
+            let transcript_path = sessions_dir.join(format!("{}.json", session.session_id));
+
+            // Verify the session file exists
+            if !transcript_path.exists() {
+                result.errors.push(format!(
+                    "Session file not found for {}: {}",
+                    session.session_id,
+                    transcript_path.display()
+                ));
+                continue;
+            }
+
+            // Resolve workdir if workspace_directory is provided
+            let workdir = session.workspace_directory
+                .as_ref()
+                .and_then(|path| resolve_workdir(path));
+
+            // Create agent_metadata with transcript_path
+            let mut agent_metadata = HashMap::new();
+            agent_metadata.insert(
+                "transcript_path".to_string(),
+                transcript_path.to_string_lossy().to_string(),
+            );
+
+            // Create DiscoveredConversation
+            result.conversations.push(DiscoveredConversation {
+                tool: "continue-cli".to_string(),
+                id: session.session_id,
+                workdir,
+                created_at: Some(session.date_created / 1000),  // Convert ms to sec
+                updated_at: Some(session.date_created / 1000),
+                model: None,  // Continue doesn't store model in transcript
+                agent_metadata,
+            });
+        }
+
+        result
+    }
+
+    fn tool_name() -> &'static str {
+        "continue-cli"
+    }
+}
+
 // Cursor to checkpoint preset
 pub struct CursorPreset;
 
@@ -1054,6 +1266,80 @@ impl CursorPreset {
         }
 
         Ok(None)
+    }
+}
+
+impl Discoverable for CursorPreset {
+    fn discover_conversations(since: Option<i64>) -> DiscoveryResult {
+        let mut result = DiscoveryResult::default();
+
+        // Get database path
+        let db_path = match Self::cursor_global_database_path() {
+            Ok(path) => path,
+            Err(e) => {
+                result.errors.push(format!("Cursor database not found: {}", e));
+                return result;
+            }
+        };
+
+        // Open read-only
+        let conn = match Self::open_sqlite_readonly(&db_path) {
+            Ok(conn) => conn,
+            Err(e) => {
+                result.errors.push(format!("Failed to open Cursor database: {}", e));
+                return result;
+            }
+        };
+
+        // Query for all conversation keys
+        let query = "SELECT key FROM cursorDiskKV WHERE key LIKE 'composerData:%'";
+        let mut stmt = match conn.prepare(query) {
+            Ok(stmt) => stmt,
+            Err(e) => {
+                result.errors.push(format!("Failed to prepare query: {}", e));
+                return result;
+            }
+        };
+
+        let rows = match stmt.query_map([], |row| row.get::<_, String>(0)) {
+            Ok(rows) => rows,
+            Err(e) => {
+                result.errors.push(format!("Failed to execute query: {}", e));
+                return result;
+            }
+        };
+
+        // Extract conversation IDs from keys
+        for row_result in rows {
+            match row_result {
+                Ok(key) => {
+                    // Extract UUID from composerData:<uuid>
+                    if let Some(conversation_id) = key.strip_prefix("composerData:") {
+                        // Create DiscoveredConversation
+                        // Note: Cursor doesn't expose timestamps easily without fetching full data,
+                        // so we ignore the 'since' parameter
+                        result.conversations.push(DiscoveredConversation {
+                            tool: "cursor".to_string(),
+                            id: conversation_id.to_string(),
+                            workdir: None,  // Cursor doesn't store workdir in conversation metadata
+                            created_at: None,
+                            updated_at: None,
+                            model: None,
+                            agent_metadata: HashMap::new(),
+                        });
+                    }
+                }
+                Err(e) => {
+                    result.errors.push(format!("Failed to read row: {}", e));
+                }
+            }
+        }
+
+        result
+    }
+
+    fn tool_name() -> &'static str {
+        "cursor"
     }
 }
 
@@ -1561,5 +1847,82 @@ impl AgentCheckpointPreset for AiTabPreset {
             will_edit_filepaths: None,
             dirty_files,
         })
+    }
+}
+
+// ====================================================================
+// Discovery Types and Trait for sync-prompts conversation discovery
+// ====================================================================
+
+/// Metadata about a discovered conversation before full import
+#[derive(Debug, Clone)]
+pub struct DiscoveredConversation {
+    pub tool: String,                           // "cursor", "claude", "continue-cli"
+    pub id: String,                             // UUID conversation ID (matches AgentId.id field)
+    pub workdir: Option<String>,                // Path for workdir matching
+    pub created_at: Option<i64>,                // Unix timestamp
+    pub updated_at: Option<i64>,                // Unix timestamp
+    pub model: Option<String>,                  // Model name (if extractable)
+    pub agent_metadata: HashMap<String, String>, // Tool-specific metadata (e.g., transcript_path)
+}
+
+/// Result of discovery operation
+#[derive(Debug, Default)]
+pub struct DiscoveryResult {
+    pub conversations: Vec<DiscoveredConversation>,
+    pub errors: Vec<String>,  // Non-fatal error messages
+}
+
+/// Trait for presets that support conversation discovery
+pub trait Discoverable {
+    /// Discover all available conversations for this tool
+    ///
+    /// Parameters:
+    /// - `since`: Optional Unix timestamp - only discover conversations created/updated after this time
+    ///           If the tool doesn't have timestamp data, this filter is ignored
+    ///
+    /// Returns: DiscoveryResult with conversations and any non-fatal errors
+    fn discover_conversations(since: Option<i64>) -> DiscoveryResult;
+
+    /// Get the tool name for this preset
+    fn tool_name() -> &'static str;
+}
+
+// ====================================================================
+// Helper Functions for Discovery
+// ====================================================================
+
+/// Decode Claude Code project directory name to actual path
+/// Converts directory names like `-Users-svarlamov-projects-git-ai` to `/Users/svarlamov/projects/git-ai`
+fn decode_claude_project_directory(dir_name: &str) -> Option<String> {
+    // Claude project directories start with `-` and use `-` as path separator
+    if !dir_name.starts_with('-') {
+        return None;
+    }
+
+    // Strip leading `-` and replace remaining `-` with `/`
+    let path = dir_name[1..].replace('-', "/");
+
+    // Prepend `/` to make it absolute
+    Some(format!("/{}", path))
+}
+
+/// Validate and resolve a path to a git repository workdir
+/// Uses existing find_repository() to check if path is a valid git repo
+fn resolve_workdir(path: &str) -> Option<String> {
+    use crate::git::repository::find_repository;
+
+    // Use find_repository with -C flag to check if path is a git repo
+    let global_args = vec!["-C".to_string(), path.to_string()];
+
+    match find_repository(&global_args) {
+        Ok(repo) => {
+            // Repository found! Extract workdir
+            match repo.workdir() {
+                Ok(workdir) => Some(workdir.to_string_lossy().to_string()),
+                Err(_) => None,
+            }
+        }
+        Err(_) => None,  // Not a git repo
     }
 }

@@ -1,5 +1,9 @@
+use crate::authorship::authorship_log_serialization::generate_short_hash;
 use crate::authorship::internal_db::{InternalDatabase, PromptDbRecord};
 use crate::authorship::prompt_utils::{update_prompt_from_tool, PromptUpdateResult};
+use crate::commands::checkpoint_agent::agent_presets::{
+    ClaudePreset, ContinueCliPreset, CursorPreset, DiscoveredConversation, Discoverable,
+};
 use crate::error::GitAiError;
 use crate::observability::log_error;
 use chrono::{DateTime, NaiveDate};
@@ -103,21 +107,19 @@ fn sync_prompts(
         .lock()
         .map_err(|e| GitAiError::Generic(format!("Failed to lock database: {}", e)))?;
 
-    // Query prompts
+    // ===== PHASE 1: UPDATE EXISTING PROMPTS =====
+    eprintln!("\n=== Phase 1: Updating existing prompts ===");
+
+    // Query prompts to update (filter by workdir/since if specified)
     let prompts = if let Some(since) = since_timestamp {
-        eprintln!("Syncing prompts updated since Unix timestamp {}", since);
+        eprintln!("Updating prompts modified since Unix timestamp {}", since);
         db_lock.list_prompts(workdir, Some(since), 10000, 0)?
     } else {
-        eprintln!("Syncing all prompts in database");
+        eprintln!("Updating all prompts in database");
         db_lock.list_prompts(workdir, None, 10000, 0)?
     };
 
-    if prompts.is_empty() {
-        eprintln!("No prompts to sync");
-        return Ok(());
-    }
-
-    eprintln!("Found {} prompts to process", prompts.len());
+    eprintln!("Found {} prompts to update", prompts.len());
 
     // Deduplicate by agent_id (keep latest per conversation)
     let prompts_to_update = deduplicate_by_agent_id(&prompts);
@@ -126,7 +128,7 @@ fn sync_prompts(
         prompts_to_update.len()
     );
 
-    // Update each prompt
+    // Update each prompt (existing logic)
     let mut updated_records = Vec::new();
     let mut success_count = 0;
     let mut skip_count = 0;
@@ -152,7 +154,7 @@ fn sync_prompts(
                 log_error(
                     &e,
                     Some(serde_json::json!({
-                        "operation": "sync_prompts",
+                        "operation": "sync_prompts_update",
                         "prompt_id": record.id,
                         "tool": record.tool,
                     })),
@@ -172,8 +174,68 @@ fn sync_prompts(
     }
 
     eprintln!(
-        "\n✓ Sync complete: {} updated, {} skipped, {} failed",
+        "Update complete: {} updated, {} skipped, {} failed",
         success_count, skip_count, error_count
+    );
+
+    // ===== PHASE 2: DISCOVERY =====
+    eprintln!("\n=== Phase 2: Discovering conversations ===");
+
+    // Call discovery trait methods for each tool
+    let cursor_result = CursorPreset::discover_conversations(since_timestamp);
+    let claude_result = ClaudePreset::discover_conversations(since_timestamp);
+    let continue_result = ContinueCliPreset::discover_conversations(since_timestamp);
+
+    let total_discovered = cursor_result.conversations.len()
+        + claude_result.conversations.len()
+        + continue_result.conversations.len();
+
+    eprintln!("Discovered {} conversations:", total_discovered);
+    eprintln!("  - Cursor: {}", cursor_result.conversations.len());
+    eprintln!("  - Claude Code: {}", claude_result.conversations.len());
+    eprintln!("  - Continue CLI: {}", continue_result.conversations.len());
+
+    // Report discovery warnings
+    let all_errors: Vec<String> = cursor_result
+        .errors
+        .iter()
+        .chain(claude_result.errors.iter())
+        .chain(continue_result.errors.iter())
+        .cloned()
+        .collect();
+
+    if !all_errors.is_empty() {
+        eprintln!("\nDiscovery warnings:");
+        for error in &all_errors {
+            eprintln!("  ⚠ {}", error);
+        }
+    }
+
+    // Combine all discovered conversations
+    let all_discovered: Vec<DiscoveredConversation> = cursor_result
+        .conversations
+        .into_iter()
+        .chain(claude_result.conversations.into_iter())
+        .chain(continue_result.conversations.into_iter())
+        .collect();
+
+    // ===== PHASE 3: IMPORT NEW CONVERSATIONS =====
+    eprintln!("\n=== Phase 3: Importing new conversations ===");
+    let import_stats = import_discovered_conversations(&mut db_lock, all_discovered)?;
+
+    eprintln!("Import results:");
+    eprintln!("  ✓ Imported: {}", import_stats.imported);
+    eprintln!("  - Already exists: {}", import_stats.already_exists);
+    eprintln!("  - Skipped: {}", import_stats.skipped);
+    eprintln!("  ✗ Failed: {}", import_stats.failed);
+
+    // ===== SUMMARY =====
+    eprintln!(
+        "\n✓ Sync complete: {} imported, {} updated, {} skipped, {} failed",
+        import_stats.imported,
+        success_count,
+        skip_count,
+        error_count + import_stats.failed
     );
 
     Ok(())
@@ -232,4 +294,176 @@ fn update_prompt_record(
         PromptUpdateResult::Unchanged => Ok(None),
         PromptUpdateResult::Failed(e) => Err(e),
     }
+}
+
+// ====================================================================
+// Import Phase - Discovering and importing new conversations
+// ====================================================================
+
+/// Statistics for import operation
+#[derive(Debug, Default)]
+pub struct ImportStats {
+    pub imported: usize,       // Successfully imported new conversations
+    pub already_exists: usize, // Skipped because already in database
+    pub skipped: usize,        // Skipped due to empty/invalid transcripts
+    pub failed: usize,         // Failed to fetch or parse
+}
+
+/// Import discovered conversations into database
+fn import_discovered_conversations(
+    db: &mut InternalDatabase,
+    all_discovered: Vec<DiscoveredConversation>,
+) -> Result<ImportStats, GitAiError> {
+    let mut stats = ImportStats::default();
+
+    if all_discovered.is_empty() {
+        return Ok(stats);
+    }
+
+    // Process in chunks of 100 for memory management
+    const CHUNK_SIZE: usize = 100;
+    let mut records_to_import = Vec::new();
+
+    for conversation in all_discovered {
+        // Generate hash for deduplication
+        let hash = generate_short_hash(&conversation.id, &conversation.tool);
+
+        // Check if already exists in database
+        match db.get_prompt(&hash) {
+            Ok(Some(_)) => {
+                stats.already_exists += 1;
+                continue;
+            }
+            Ok(None) => {
+                // Not in database, try to import
+            }
+            Err(e) => {
+                eprintln!("  ⚠ Failed to check existence for {}: {}", &hash[..8], e);
+                stats.failed += 1;
+                continue;
+            }
+        }
+
+        // Fetch and create record
+        match fetch_and_create_record(&conversation) {
+            Ok(Some(record)) => {
+                records_to_import.push(record);
+
+                // Batch upsert when chunk is full
+                if records_to_import.len() >= CHUNK_SIZE {
+                    match db.batch_upsert_prompts(&records_to_import) {
+                        Ok(_) => stats.imported += records_to_import.len(),
+                        Err(e) => {
+                            eprintln!("  ✗ Batch upsert failed: {}", e);
+                            stats.failed += records_to_import.len();
+                        }
+                    }
+                    records_to_import.clear();
+                }
+            }
+            Ok(None) => {
+                stats.skipped += 1;
+            }
+            Err(e) => {
+                eprintln!("  ⚠ Failed to import {}: {}", &conversation.id[..8], e);
+                stats.failed += 1;
+            }
+        }
+    }
+
+    // Upsert remaining records
+    if !records_to_import.is_empty() {
+        match db.batch_upsert_prompts(&records_to_import) {
+            Ok(_) => stats.imported += records_to_import.len(),
+            Err(e) => {
+                eprintln!("  ✗ Final batch upsert failed: {}", e);
+                stats.failed += records_to_import.len();
+            }
+        }
+    }
+
+    Ok(stats)
+}
+
+/// Fetch full transcript and create PromptDbRecord
+fn fetch_and_create_record(
+    conv: &DiscoveredConversation,
+) -> Result<Option<PromptDbRecord>, GitAiError> {
+    // Fetch transcript based on tool
+    let (transcript, model) = match conv.tool.as_str() {
+        "cursor" => fetch_cursor_transcript(&conv.id)?,
+        "claude" => fetch_claude_transcript(&conv.agent_metadata)?,
+        "continue-cli" => fetch_continue_transcript(&conv.agent_metadata)?,
+        _ => {
+            return Err(GitAiError::Generic(format!("Unknown tool: {}", conv.tool)));
+        }
+    };
+
+    // Skip empty transcripts
+    if transcript.messages.is_empty() {
+        return Ok(None);
+    }
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    // Generate ID hash
+    let id = generate_short_hash(&conv.id, &conv.tool);
+
+    // Create PromptDbRecord
+    let record = PromptDbRecord {
+        id,
+        tool: conv.tool.clone(),
+        external_thread_id: conv.id.clone(),
+        model: model.or(conv.model.clone()).unwrap_or_else(|| "unknown".to_string()),
+        messages: transcript,
+        workdir: conv.workdir.clone(),
+        commit_sha: None,
+        agent_metadata: if conv.agent_metadata.is_empty() {
+            None
+        } else {
+            Some(conv.agent_metadata.clone())
+        },
+        human_author: None,          // Not available during discovery
+        total_additions: None,        // Not available during discovery
+        total_deletions: None,        // Not available during discovery
+        accepted_lines: None,         // Not available during discovery
+        overridden_lines: None,       // Not available during discovery
+        created_at: conv.created_at.unwrap_or(now),
+        updated_at: conv.updated_at.unwrap_or(now),
+    };
+
+    Ok(Some(record))
+}
+
+/// Fetch Cursor transcript
+fn fetch_cursor_transcript(
+    conversation_id: &str,
+) -> Result<(crate::authorship::transcript::AiTranscript, Option<String>), GitAiError> {
+    let (transcript, model) = CursorPreset::fetch_latest_cursor_conversation(conversation_id)?
+        .ok_or_else(|| GitAiError::Generic("No transcript data found".to_string()))?;
+    Ok((transcript, Some(model)))
+}
+
+/// Fetch Claude transcript
+fn fetch_claude_transcript(
+    metadata: &HashMap<String, String>,
+) -> Result<(crate::authorship::transcript::AiTranscript, Option<String>), GitAiError> {
+    let transcript_path = metadata
+        .get("transcript_path")
+        .ok_or_else(|| GitAiError::Generic("No transcript_path in metadata".to_string()))?;
+    ClaudePreset::transcript_and_model_from_claude_code_jsonl(transcript_path)
+}
+
+/// Fetch Continue CLI transcript
+fn fetch_continue_transcript(
+    metadata: &HashMap<String, String>,
+) -> Result<(crate::authorship::transcript::AiTranscript, Option<String>), GitAiError> {
+    let transcript_path = metadata
+        .get("transcript_path")
+        .ok_or_else(|| GitAiError::Generic("No transcript_path in metadata".to_string()))?;
+    let transcript = ContinueCliPreset::transcript_from_continue_json(transcript_path)?;
+    Ok((transcript, None)) // Continue doesn't store model in transcript
 }
