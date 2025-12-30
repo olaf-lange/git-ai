@@ -31,6 +31,14 @@ pub fn handle_flush_logs(args: &[String]) {
                 .filter(|s| !s.is_empty())
         });
 
+    // Find the .git/ai/logs directory
+    let (repo_root, logs_dir) = match find_logs_directory() {
+        Some(result) => result,
+        None => {
+            std::process::exit(1);
+        }
+    };
+
     // Check for OSS DSN: runtime env var takes precedence over build-time value
     // Can be explicitly disabled with empty string
     // Skip OSS DSN if OSS telemetry is disabled in config
@@ -47,14 +55,6 @@ pub fn handle_flush_logs(args: &[String]) {
     if oss_dsn.is_none() && enterprise_dsn.is_none() {
         std::process::exit(1);
     }
-
-    // Find the .git/ai/logs directory
-    let logs_dir = match find_logs_directory() {
-        Some(dir) => dir,
-        None => {
-            std::process::exit(1);
-        }
-    };
 
     // Get current PID to exclude our own log file
     let current_pid = std::process::id();
@@ -84,7 +84,7 @@ pub fn handle_flush_logs(args: &[String]) {
     }
 
     // Try to get repository info for metadata
-    let repo = find_repository_in_path(&logs_dir.to_string_lossy()).ok();
+    let repo = find_repository_in_path(&repo_root.to_string_lossy()).ok();
     let remotes_info = repo
         .as_ref()
         .and_then(|r| r.remotes_with_urls().ok())
@@ -231,7 +231,7 @@ fn cleanup_old_logs(logs_dir: &PathBuf) {
     }
 }
 
-fn find_logs_directory() -> Option<PathBuf> {
+fn find_logs_directory() -> Option<(PathBuf, PathBuf)> {
     let mut current = std::env::current_dir().ok()?;
 
     loop {
@@ -239,7 +239,7 @@ fn find_logs_directory() -> Option<PathBuf> {
         if git_dir.exists() && git_dir.is_dir() {
             let logs_dir = git_dir.join("ai").join("logs");
             if logs_dir.exists() && logs_dir.is_dir() {
-                return Some(logs_dir);
+                return Some((current.clone(), logs_dir));
             }
         }
 
