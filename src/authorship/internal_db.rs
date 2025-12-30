@@ -50,8 +50,8 @@ const MIGRATIONS: &[&str] = &[
     r#"
     CREATE TABLE cas_sync_queue (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        hash BLOB NOT NULL UNIQUE,
-        data BLOB NOT NULL,
+        hash TEXT NOT NULL UNIQUE,
+        data TEXT NOT NULL,
         metadata TEXT NOT NULL DEFAULT '{}',
         status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'processing')),
         attempts INTEGER NOT NULL DEFAULT 0,
@@ -225,8 +225,8 @@ impl PromptDbRecord {
 #[derive(Debug, Clone)]
 pub struct CasSyncRecord {
     pub id: i64,
-    pub hash: Vec<u8>,
-    pub data: Vec<u8>,
+    pub hash: String,
+    pub data: String,
     pub metadata: HashMap<String, String>,
     pub attempts: u32,
 }
@@ -787,12 +787,27 @@ impl InternalDatabase {
     }
 
     /// Enqueue a CAS object for syncing
+    ///
+    /// Takes raw JSON data, canonicalizes it (RFC 8785), computes SHA256 hash,
+    /// and stores both in the queue.
+    ///
+    /// Returns the hash of the canonicalized content.
     pub fn enqueue_cas_object(
         &mut self,
-        hash: &[u8],
-        data: &[u8],
+        json_data: &serde_json::Value,
         metadata: Option<&HashMap<String, String>>,
-    ) -> Result<(), GitAiError> {
+    ) -> Result<String, GitAiError> {
+        use sha2::{Digest, Sha256};
+
+        // Canonicalize JSON (RFC 8785)
+        let canonical = serde_json_canonicalizer::to_string(json_data)
+            .map_err(|e| GitAiError::Generic(format!("Failed to canonicalize JSON: {}", e)))?;
+
+        // Hash the canonicalized content
+        let mut hasher = Sha256::new();
+        hasher.update(canonical.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -806,10 +821,10 @@ impl InternalDatabase {
                 hash, data, metadata, status, attempts, next_retry_at, created_at
             ) VALUES (?1, ?2, ?3, 'pending', 0, ?4, ?4)
             "#,
-            params![hash, data, metadata_json, now],
+            params![hash, canonical, metadata_json, now],
         )?;
 
-        Ok(())
+        Ok(hash)
     }
 
     /// Dequeue a batch of CAS objects for syncing (with lock acquisition)
@@ -852,12 +867,12 @@ impl InternalDatabase {
         let rows = stmt.query_map(params![now, now, batch_size], |row| {
             let metadata_json: String = row.get(3)?;
             let metadata: HashMap<String, String> = serde_json::from_str(&metadata_json).unwrap_or_default();
-            let hash_blob: Vec<u8> = row.get(1)?;
-            let data_blob: Vec<u8> = row.get(2)?;
+            let hash: String = row.get(1)?;
+            let data: String = row.get(2)?;
             Ok(CasSyncRecord {
                 id: row.get(0)?,
-                hash: hash_blob,
-                data: data_blob,
+                hash,
+                data,
                 attempts: row.get(4)?,
                 metadata,
             })
@@ -1190,18 +1205,17 @@ mod tests {
         metadata.insert("key1".to_string(), "value1".to_string());
         metadata.insert("key2".to_string(), "value2".to_string());
 
-        let hash = b"abc123".to_vec();
-        let data = b"rawdata".to_vec();
+        let json_data = serde_json::json!({"test": "data", "number": 123});
 
         // Enqueue an object with metadata
-        db.enqueue_cas_object(&hash, &data, Some(&metadata)).unwrap();
+        let hash = db.enqueue_cas_object(&json_data, Some(&metadata)).unwrap();
 
         // Verify metadata was stored correctly
         let metadata_json: String = db
             .conn
             .query_row(
                 "SELECT metadata FROM cas_sync_queue WHERE hash = ?",
-                params![hash],
+                params![&hash],
                 |row| row.get(0),
             )
             .unwrap();
@@ -1214,7 +1228,9 @@ mod tests {
         let batch = db.dequeue_cas_batch(10).unwrap();
         assert_eq!(batch.len(), 1);
         assert_eq!(batch[0].hash, hash);
-        assert_eq!(batch[0].data, data);
+        // Data is canonicalized JSON
+        let stored_json: serde_json::Value = serde_json::from_str(&batch[0].data).unwrap();
+        assert_eq!(stored_json, json_data);
         assert_eq!(batch[0].metadata.get("key1"), Some(&"value1".to_string()));
         assert_eq!(batch[0].metadata.get("key2"), Some(&"value2".to_string()));
     }
@@ -1223,24 +1239,25 @@ mod tests {
     fn test_enqueue_cas_object() {
         let (mut db, _temp_dir) = create_test_db();
 
-        let hash = b"abc123".to_vec();
-        let data = b"rawdata".to_vec();
+        let json_data = serde_json::json!({"key": "value"});
 
         // Enqueue an object
-        db.enqueue_cas_object(&hash, &data, None).unwrap();
+        let hash = db.enqueue_cas_object(&json_data, None).unwrap();
 
         // Verify it was inserted with correct defaults
-        let (stored_hash, stored_data, metadata, status, attempts): (Vec<u8>, Vec<u8>, String, String, u32) = db
+        let (stored_hash, stored_data, metadata, status, attempts): (String, String, String, String, u32) = db
             .conn
             .query_row(
                 "SELECT hash, data, metadata, status, attempts FROM cas_sync_queue WHERE hash = ?",
-                params![hash],
+                params![&hash],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .unwrap();
 
         assert_eq!(stored_hash, hash);
-        assert_eq!(stored_data, data);
+        // Data should be canonicalized JSON
+        let stored_json: serde_json::Value = serde_json::from_str(&stored_data).unwrap();
+        assert_eq!(stored_json, json_data);
         assert_eq!(status, "pending");
         assert_eq!(attempts, 0);
         assert_eq!(metadata, "{}");
@@ -1250,45 +1267,36 @@ mod tests {
     fn test_enqueue_duplicate_hash() {
         let (mut db, _temp_dir) = create_test_db();
 
-        let hash = b"abc123".to_vec();
-        let data1 = b"data1".to_vec();
-        let data2 = b"data2".to_vec();
+        // Same JSON content should produce same hash
+        let json_data = serde_json::json!({"same": "content"});
 
-        // Enqueue the same hash twice
-        db.enqueue_cas_object(&hash, &data1, None).unwrap();
-        db.enqueue_cas_object(&hash, &data2, None).unwrap();
+        // Enqueue the same content twice
+        let hash1 = db.enqueue_cas_object(&json_data, None).unwrap();
+        let hash2 = db.enqueue_cas_object(&json_data, None).unwrap();
+
+        // Both calls should return the same hash
+        assert_eq!(hash1, hash2);
 
         // Verify only one record exists (INSERT OR IGNORE)
         let count: i64 = db
             .conn
             .query_row(
                 "SELECT COUNT(*) FROM cas_sync_queue WHERE hash = ?",
-                params![hash],
+                params![&hash1],
                 |row| row.get(0),
             )
             .unwrap();
         assert_eq!(count, 1);
-
-        // Verify it kept the first data
-        let data: Vec<u8> = db
-            .conn
-            .query_row(
-                "SELECT data FROM cas_sync_queue WHERE hash = ?",
-                params![hash],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(data, data1);
     }
 
     #[test]
     fn test_dequeue_cas_batch() {
         let (mut db, _temp_dir) = create_test_db();
 
-        // Enqueue multiple objects
-        db.enqueue_cas_object(b"hash1", b"data1", None).unwrap();
-        db.enqueue_cas_object(b"hash2", b"data2", None).unwrap();
-        db.enqueue_cas_object(b"hash3", b"data3", None).unwrap();
+        // Enqueue multiple objects with different content
+        db.enqueue_cas_object(&serde_json::json!({"id": 1}), None).unwrap();
+        db.enqueue_cas_object(&serde_json::json!({"id": 2}), None).unwrap();
+        db.enqueue_cas_object(&serde_json::json!({"id": 3}), None).unwrap();
 
         // Dequeue batch of 2
         let batch = db.dequeue_cas_batch(2).unwrap();
@@ -1326,10 +1334,10 @@ mod tests {
             .unwrap()
             .as_secs() as i64;
 
-        let hash1 = b"hash1".to_vec();
-        let hash2 = b"hash2".to_vec();
-        let data1 = b"data1".to_vec();
-        let data2 = b"data2".to_vec();
+        let hash1 = "hash1";
+        let hash2 = "hash2";
+        let data1 = "data1";
+        let data2 = "data2";
 
         // Insert one record ready to retry (past)
         db.conn.execute(
@@ -1353,8 +1361,8 @@ mod tests {
     fn test_dequeue_locks_records() {
         let (mut db, _temp_dir) = create_test_db();
 
-        let hash = b"hash1".to_vec();
-        db.enqueue_cas_object(&hash, b"data1", None).unwrap();
+        let json_data = serde_json::json!({"test": "lock"});
+        let hash = db.enqueue_cas_object(&json_data, None).unwrap();
 
         // Dequeue
         let batch = db.dequeue_cas_batch(10).unwrap();
@@ -1365,7 +1373,7 @@ mod tests {
             .conn
             .query_row(
                 "SELECT status FROM cas_sync_queue WHERE hash = ?",
-                params![hash],
+                params![&hash],
                 |row| row.get(0),
             )
             .unwrap();
@@ -1376,7 +1384,7 @@ mod tests {
             .conn
             .query_row(
                 "SELECT processing_started_at FROM cas_sync_queue WHERE hash = ?",
-                params![hash],
+                params![&hash],
                 |row| row.get(0),
             )
             .unwrap();
@@ -1396,8 +1404,8 @@ mod tests {
             .unwrap()
             .as_secs() as i64;
 
-        let hash = b"hash1".to_vec();
-        let data = b"data1".to_vec();
+        let hash = "hash1";
+        let data = "data1";
 
         // Insert a record in 'processing' state with old timestamp (>10 minutes ago)
         let stale_time = now - 700; // 11+ minutes ago
@@ -1421,10 +1429,10 @@ mod tests {
             .unwrap()
             .as_secs() as i64;
 
-        let hash1 = b"hash1".to_vec();
-        let hash2 = b"hash2".to_vec();
-        let data1 = b"data1".to_vec();
-        let data2 = b"data2".to_vec();
+        let hash1 = "hash1";
+        let hash2 = "hash2";
+        let data1 = "data1";
+        let data2 = "data2";
 
         // Insert a record with 6 attempts (max reached)
         db.conn.execute(
@@ -1449,7 +1457,7 @@ mod tests {
     fn test_update_cas_sync_failure() {
         let (mut db, _temp_dir) = create_test_db();
 
-        db.enqueue_cas_object(b"hash1", b"data1", None).unwrap();
+        db.enqueue_cas_object(&serde_json::json!({"test": "failure"}), None).unwrap();
         let batch = db.dequeue_cas_batch(10).unwrap();
         let record = &batch[0];
 
@@ -1505,7 +1513,7 @@ mod tests {
     fn test_delete_cas_sync_record() {
         let (mut db, _temp_dir) = create_test_db();
 
-        db.enqueue_cas_object(b"hash1", b"data1", None).unwrap();
+        db.enqueue_cas_object(&serde_json::json!({"test": "delete"}), None).unwrap();
         let batch = db.dequeue_cas_batch(10).unwrap();
         let record = &batch[0];
 

@@ -1,10 +1,9 @@
-use crate::authorship::internal_db::InternalDatabase;
-use futures::stream::{self, StreamExt};
+use crate::api::{ApiClient, ApiContext, CasObject, CasUploadRequest};
+use crate::authorship::internal_db::{CasSyncRecord, InternalDatabase};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Handle the flush-cas command
-pub fn handle_flush_cas(args: &[String]) {
+pub fn handle_flush_cas(_args: &[String]) {
     eprintln!("Starting CAS sync worker...");
 
     // Get database connection
@@ -16,120 +15,136 @@ pub fn handle_flush_cas(args: &[String]) {
         }
     };
 
-    // Process queue in batches until empty
-    let total_synced = smol::block_on(async {
-        let mut total = 0;
-        let db_arc = Arc::new(db);
+    let mut total_synced = 0;
 
-        loop {
-            // Dequeue batch of 10
-            let batch = {
-                let mut db_lock = db_arc.lock().unwrap();
-                match db_lock.dequeue_cas_batch(10) {
-                    Ok(batch) => batch,
-                    Err(e) => {
-                        eprintln!("Error dequeuing batch: {}", e);
-                        break;
-                    }
+    // Create API client once to reuse for all batches
+    let context = ApiContext::new(None);
+    let client = ApiClient::new(context);
+
+    loop {
+        // Dequeue batch of up to 50 objects
+        let batch = {
+            let mut db_lock = db.lock().unwrap();
+            match db_lock.dequeue_cas_batch(50) {
+                Ok(batch) => batch,
+                Err(e) => {
+                    eprintln!("Error dequeuing batch: {}", e);
+                    break;
                 }
-            };
-
-            // If batch is empty, we're done
-            if batch.is_empty() {
-                break;
             }
+        };
 
-            eprintln!("Processing batch of {} objects...", batch.len());
-
-            // Process batch concurrently
-            let results = stream::iter(batch)
-                .map(|record| {
-                    let db = Arc::clone(&db_arc);
-
-                    smol::unblock(move || {
-                        // Convert hash bytes to hex string for display
-                        let hash_hex: String = record.hash.iter().map(|b| format!("{:02x}", b)).collect();
-                        let hash_short = if hash_hex.len() > 16 {
-                            &hash_hex[..16]
-                        } else {
-                            &hash_hex
-                        };
-
-                        // Attempt to sync the object
-                        match sync_cas_object(record.hash.clone(), record.data.clone(), record.metadata.clone()) {
-                            Ok(()) => {
-                                // Success - delete from queue
-                                let mut db_lock = db.lock().unwrap();
-                                match db_lock.delete_cas_sync_record(record.id) {
-                                    Ok(()) => {
-                                        eprintln!("  ✓ Synced {}", hash_short);
-                                        Ok(())
-                                    }
-                                    Err(e) => {
-                                        eprintln!("  ✗ Failed to delete record for {}: {}", hash_short, e);
-                                        Err(format!("Delete failed: {}", e))
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                // Failure - update error and retry info
-                                let error_msg = e.to_string();
-                                let mut db_lock = db.lock().unwrap();
-                                match db_lock.update_cas_sync_failure(record.id, &error_msg) {
-                                    Ok(()) => {
-                                        eprintln!(
-                                            "  ✗ Failed {} (attempt {}): {}",
-                                            hash_short,
-                                            record.attempts + 1,
-                                            error_msg
-                                        );
-                                    }
-                                    Err(update_err) => {
-                                        eprintln!(
-                                            "  ✗ Failed to update error for {}: {}",
-                                            hash_short, update_err
-                                        );
-                                    }
-                                }
-                                Err(error_msg)
-                            }
-                        }
-                    })
-                })
-                .buffer_unordered(10)
-                .collect::<Vec<_>>()
-                .await;
-
-            // Count successes
-            let successes = results.iter().filter(|r| r.is_ok()).count();
-            total += successes;
-
-            eprintln!("Batch complete: {} succeeded, {} failed", successes, results.len() - successes);
+        // If batch is empty, we're done
+        if batch.is_empty() {
+            break;
         }
 
-        total
-    });
+        eprintln!("Processing batch of {} objects...", batch.len());
+
+        // Build batch request with all objects
+        let mut cas_objects = Vec::new();
+        let mut record_map: HashMap<String, CasSyncRecord> = HashMap::new();
+
+        for record in &batch {
+            let content: serde_json::Value = match serde_json::from_str(&record.data) {
+                Ok(v) => v,
+                Err(e) => {
+                    // Mark as failed if we can't parse the JSON
+                    let mut db_lock = db.lock().unwrap();
+                    let _ = db_lock.update_cas_sync_failure(
+                        record.id,
+                        &format!("JSON parse error: {}", e),
+                    );
+                    eprintln!(
+                        "  ✗ Failed {} (parse error): {}",
+                        &record.hash[..16.min(record.hash.len())],
+                        e
+                    );
+                    continue;
+                }
+            };
+            cas_objects.push(CasObject {
+                content,
+                hash: record.hash.clone(),
+                metadata: record.metadata.clone(),
+            });
+            record_map.insert(record.hash.clone(), record.clone());
+        }
+
+        // Skip API call if no valid objects
+        if cas_objects.is_empty() {
+            continue;
+        }
+
+        // Send single batch request
+        let request = CasUploadRequest {
+            objects: cas_objects,
+        };
+
+        match client.upload_cas(request) {
+            Ok(response) => {
+                // Process each result
+                let mut db_lock = db.lock().unwrap();
+                for result in response.results {
+                    if let Some(record) = record_map.get(&result.hash) {
+                        let hash_short = &result.hash[..16.min(result.hash.len())];
+                        if result.status == "ok" {
+                            // Success - delete from queue
+                            if let Err(e) = db_lock.delete_cas_sync_record(record.id) {
+                                eprintln!("  ✗ Failed to delete record for {}: {}", hash_short, e);
+                            } else {
+                                eprintln!("  ✓ Synced {}", hash_short);
+                                total_synced += 1;
+                            }
+                        } else {
+                            // Failed - update error
+                            let error =
+                                result.error.unwrap_or_else(|| "Unknown error".to_string());
+                            if let Err(e) = db_lock.update_cas_sync_failure(record.id, &error) {
+                                eprintln!("  ✗ Failed to update error for {}: {}", hash_short, e);
+                            } else {
+                                eprintln!(
+                                    "  ✗ Failed {} (attempt {}): {}",
+                                    hash_short,
+                                    record.attempts + 1,
+                                    error
+                                );
+                            }
+                        }
+                    }
+                }
+                eprintln!(
+                    "Batch complete: {} succeeded, {} failed",
+                    response.success_count, response.failure_count
+                );
+            }
+            Err(e) => {
+                // Entire batch failed - mark all as failed
+                let error_msg = e.to_string();
+                let mut db_lock = db.lock().unwrap();
+                for record in batch.iter() {
+                    let hash_short = &record.hash[..16.min(record.hash.len())];
+                    if let Err(update_err) =
+                        db_lock.update_cas_sync_failure(record.id, &error_msg)
+                    {
+                        eprintln!("  ✗ Failed to update error for {}: {}", hash_short, update_err);
+                    } else {
+                        eprintln!(
+                            "  ✗ Failed {} (attempt {}): {}",
+                            hash_short,
+                            record.attempts + 1,
+                            error_msg
+                        );
+                    }
+                }
+                eprintln!("Batch failed: {}", e);
+            }
+        }
+    }
 
     if total_synced > 0 {
         eprintln!("\n✓ Successfully synced {} objects", total_synced);
     } else {
         eprintln!("\n○ No objects were synced");
     }
-}
-
-/// Sync a CAS object to remote storage
-///
-/// TODO: Implement actual CAS sync to remote storage
-/// This will call the backend API to upload the CAS object
-/// The `data` parameter contains raw bytes
-/// The `metadata` parameter contains string-to-string metadata map
-fn sync_cas_object(_hash: Vec<u8>, _data: Vec<u8>, _metadata: HashMap<String, String>) -> Result<(), Box<dyn std::error::Error>> {
-    // STUB: For now, just return success
-    // In the future, this will:
-    // 1. POST to /api/cas or similar endpoint with raw bytes
-    // 2. Include metadata in the request (e.g., as JSON in headers or request body)
-    // 3. Handle authentication
-    // 4. Return appropriate errors on failure
-
-    Ok(())
 }

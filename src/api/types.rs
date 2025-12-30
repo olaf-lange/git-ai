@@ -81,3 +81,35 @@ pub struct ApiErrorResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
 }
+
+/// Single CAS object for upload
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CasObject {
+    pub content: serde_json::Value,
+    pub hash: String,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub metadata: HashMap<String, String>,
+}
+
+/// Request body for CAS upload
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CasUploadRequest {
+    pub objects: Vec<CasObject>,
+}
+
+/// Result for a single CAS object upload
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CasUploadResult {
+    pub hash: String,
+    pub status: String, // "ok" or "error"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Response from CAS upload
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CasUploadResponse {
+    pub results: Vec<CasUploadResult>,
+    pub success_count: usize,
+    pub failure_count: usize,
+}
