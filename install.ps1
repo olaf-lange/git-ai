@@ -49,7 +49,12 @@ function Wait-ForFileAvailable {
 }
 
 # GitHub repository details
-$Repo = 'acunniffe/git-ai'
+# Replaced during release builds with the actual repository (e.g., "acunniffe/git-ai")
+# When set to __REPO_PLACEHOLDER__, defaults to "acunniffe/git-ai"
+$Repo = '__REPO_PLACEHOLDER__'
+if ($Repo -eq '__REPO_PLACEHOLDER__') {
+    $Repo = 'acunniffe/git-ai'
+}
 
 # Ensure TLS 1.2 for GitHub downloads on older PowerShell versions
 try {
@@ -218,11 +223,23 @@ $arch = Get-Architecture
 if (-not $arch) { Write-ErrorAndExit "Unsupported architecture: $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)" }
 $os = 'windows'
 
+# Version placeholder - replaced during release builds with actual version (e.g., "v1.0.24")
+# When set to __VERSION_PLACEHOLDER__, defaults to environment variable or "latest"
+$PinnedVersion = '__VERSION_PLACEHOLDER__'
+
+# Embedded checksums - replaced during release builds with actual SHA256 checksums
+# Format: "hash  filename|hash  filename|..." (pipe-separated)
+# When set to __CHECKSUMS_PLACEHOLDER__, checksum verification is skipped
+$EmbeddedChecksums = '__CHECKSUMS_PLACEHOLDER__'
+
 # Determine binary name and download URLs
 $binaryName = "git-ai-$os-$arch"
-$releaseTag = $env:GIT_AI_RELEASE_TAG
-if ([string]::IsNullOrWhiteSpace($releaseTag)) {
-    $releaseTag = 'latest'
+$releaseTag = $PinnedVersion
+if ($releaseTag -eq '__VERSION_PLACEHOLDER__') {
+    $releaseTag = $env:GIT_AI_RELEASE_TAG
+    if ([string]::IsNullOrWhiteSpace($releaseTag)) {
+        $releaseTag = 'latest'
+    }
 }
 
 if ($releaseTag -eq 'latest') {
@@ -252,6 +269,60 @@ function Try-Download {
     }
 }
 
+function Verify-Checksum {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string]$BinaryName
+    )
+    
+    # Skip verification if no checksums are embedded
+    if ($EmbeddedChecksums -eq '__CHECKSUMS_PLACEHOLDER__') {
+        Write-Warning 'Checksum verification skipped (no embedded checksums)'
+        return $true
+    }
+    
+    # Parse the embedded checksums (pipe-separated, format: "hash  filename|hash  filename|...")
+    $checksumEntries = $EmbeddedChecksums -split '\|'
+    $expectedHash = $null
+    
+    foreach ($entry in $checksumEntries) {
+        $entry = $entry.Trim()
+        if (-not $entry) { continue }
+        
+        # Format is "hash  filename" (two spaces between hash and filename)
+        if ($entry -match '^([a-fA-F0-9]{64})\s+(.+)$') {
+            $hash = $Matches[1]
+            $filename = $Matches[2]
+            # Check for both with and without .exe extension
+            if ($filename -eq $BinaryName -or $filename -eq "$BinaryName.exe") {
+                $expectedHash = $hash.ToLowerInvariant()
+                break
+            }
+        }
+    }
+    
+    if (-not $expectedHash) {
+        Write-Warning "No checksum found for $BinaryName, skipping verification"
+        return $true
+    }
+    
+    # Calculate actual hash
+    try {
+        $actualHash = (Get-FileHash -Path $FilePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    } catch {
+        Write-ErrorAndExit "Failed to calculate checksum: $($_.Exception.Message)"
+    }
+    
+    if ($actualHash -eq $expectedHash) {
+        Write-Success 'Checksum verification passed'
+        return $true
+    } else {
+        Write-Host "Expected: $expectedHash" -ForegroundColor Red
+        Write-Host "Actual:   $actualHash" -ForegroundColor Red
+        return $false
+    }
+}
+
 $downloaded = $false
 if (Try-Download -Url $downloadUrlExe) { $downloaded = $true }
 elseif (Try-Download -Url $downloadUrlNoExt) { $downloaded = $true }
@@ -269,6 +340,12 @@ try {
 } catch {
     Remove-Item -Force -ErrorAction SilentlyContinue $tmpFile
     Write-ErrorAndExit 'Download failed'
+}
+
+# Verify checksum
+if (-not (Verify-Checksum -FilePath $tmpFile -BinaryName $binaryName)) {
+    Remove-Item -Force -ErrorAction SilentlyContinue $tmpFile
+    Write-ErrorAndExit 'Checksum verification failed! The downloaded binary may be corrupted or tampered with.'
 }
 
 $finalExe = Join-Path $installDir 'git-ai.exe'
