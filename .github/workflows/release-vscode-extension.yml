@@ -7,9 +7,17 @@ on:
         description: 'Dry run (no actual publish)'
         type: boolean
         default: true
+      skip_vsce:
+        description: 'Skip VS Code Marketplace (for retry)'
+        type: boolean
+        default: false
+      skip_ovsx:
+        description: 'Skip OpenVSX (for retry)'
+        type: boolean
+        default: false
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -17,8 +25,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -42,24 +48,104 @@ jobs:
         id: version
         run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
 
+      - name: Upload extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-extension
+          path: agent-support/vscode/*.vsix
+          retention-days: 1
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+  publish-vsce:
+    needs: build
+    if: ${{ !inputs.dry_run && !inputs.skip_vsce }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-support/vscode
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'yarn'
+          cache-dependency-path: agent-support/vscode/yarn.lock
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Download extension artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vscode-extension
+          path: agent-support/vscode
+
       - name: Publish to VS Code Marketplace
-        if: ${{ !inputs.dry_run }}
-        run: npx vsce publish --no-dependencies
+        run: npx vsce publish --packagePath *.vsix
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
+  publish-ovsx:
+    needs: build
+    if: ${{ !inputs.dry_run && !inputs.skip_ovsx }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-support/vscode
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'yarn'
+          cache-dependency-path: agent-support/vscode/yarn.lock
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Download extension artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vscode-extension
+          path: agent-support/vscode
+
       - name: Publish to OpenVSX
-        if: ${{ !inputs.dry_run }}
         run: npx ovsx publish *.vsix
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
 
+  bump-version:
+    needs: [publish-vsce, publish-ovsx]
+    if: |
+      always() &&
+      !inputs.dry_run &&
+      (needs.publish-vsce.result == 'success' || needs.publish-vsce.result == 'skipped') &&
+      (needs.publish-ovsx.result == 'success' || needs.publish-ovsx.result == 'skipped') &&
+      (needs.publish-vsce.result == 'success' || needs.publish-ovsx.result == 'success')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-support/vscode
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Bump patch version
-        if: ${{ !inputs.dry_run }}
         run: npm version patch --no-git-tag-version
 
       - name: Commit version bump
-        if: ${{ !inputs.dry_run }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
