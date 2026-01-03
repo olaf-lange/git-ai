@@ -273,7 +273,9 @@ fn update_prompts_to_latest(checkpoints: &mut [Checkpoint]) -> Result<(), GitAiE
     Ok(())
 }
 
-/// Batch upsert all prompts from checkpoints to the internal database
+/// Batch upsert all prompts from checkpoints to the internal database.
+/// For each unique agent_id (tool:id), only the LAST checkpoint is inserted.
+/// This mirrors the deduplication logic in update_prompts_to_latest().
 fn batch_upsert_prompts_to_db(
     checkpoints: &[Checkpoint],
     working_log: &crate::git::repo_storage::PersistedWorkingLog,
@@ -288,19 +290,30 @@ fn batch_upsert_prompts_to_db(
         .unwrap_or_default()
         .as_secs() as i64;
 
-    let mut records = Vec::new();
+    // Group checkpoints by agent_id, keeping track of the LAST index for each.
+    // This mirrors the logic in update_prompts_to_latest().
+    let mut last_checkpoint_by_agent: HashMap<String, usize> = HashMap::new();
 
-    for checkpoint in checkpoints {
+    for (idx, checkpoint) in checkpoints.iter().enumerate() {
         if checkpoint.kind == CheckpointKind::Human {
             continue;
         }
+        if let Some(agent_id) = &checkpoint.agent_id {
+            let key = format!("{}:{}", agent_id.tool, agent_id.id);
+            // Always update to the latest index (overwrites previous)
+            last_checkpoint_by_agent.insert(key, idx);
+        }
+    }
 
+    // Only create records for the LAST checkpoint of each agent_id
+    let mut records = Vec::new();
+    for (_agent_key, idx) in last_checkpoint_by_agent {
+        let checkpoint = &checkpoints[idx];
         if let Some(mut record) = PromptDbRecord::from_checkpoint(
             checkpoint,
             Some(workdir.clone()),
             Some(commit_sha.to_string()),
         ) {
-            // Update timestamp to current time
             record.updated_at = now;
             records.push(record);
         }

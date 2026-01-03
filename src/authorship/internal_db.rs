@@ -516,14 +516,9 @@ impl InternalDatabase {
 
         let tx = self.conn.transaction()?;
 
-        for record in records {
-            let messages_json = serde_json::to_string(&record.messages)?;
-            let metadata_json = record
-                .agent_metadata
-                .as_ref()
-                .and_then(|m| serde_json::to_string(m).ok());
-
-            tx.execute(
+        {
+            // Prepare statement once and reuse for all records (much faster than parsing SQL each time)
+            let mut stmt = tx.prepare_cached(
                 r#"
                 INSERT INTO prompts (
                     id, workdir, tool, model, external_thread_id,
@@ -544,7 +539,16 @@ impl InternalDatabase {
                     overridden_lines = excluded.overridden_lines,
                     updated_at = excluded.updated_at
                 "#,
-                params![
+            )?;
+
+            for record in records {
+                let messages_json = serde_json::to_string(&record.messages)?;
+                let metadata_json = record
+                    .agent_metadata
+                    .as_ref()
+                    .and_then(|m| serde_json::to_string(m).ok());
+
+                stmt.execute(params![
                     record.id,
                     record.workdir,
                     record.tool,
@@ -560,8 +564,8 @@ impl InternalDatabase {
                     record.overridden_lines,
                     record.created_at,
                     record.updated_at,
-                ],
-            )?;
+                ])?;
+            }
         }
 
         tx.commit()?;
