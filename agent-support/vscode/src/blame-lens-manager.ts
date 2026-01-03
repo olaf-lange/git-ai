@@ -30,6 +30,9 @@ export class BlameLensManager {
   // Filtered colors that have sufficient contrast against the current theme
   private filteredColors: string[] = [];
   
+  // After-text decoration for showing "[View $MODEL Thread]" on AI lines
+  private afterTextDecoration: vscode.TextEditorDecorationType | null = null;
+  
   // Minimum contrast ratio for WCAG AA compliance (3:1 for UI elements)
   private static readonly MIN_CONTRAST_RATIO = 3.0;
   
@@ -553,6 +556,7 @@ export class BlameLensManager {
   private async updateStatusBar(editor: vscode.TextEditor | undefined): Promise<void> {
     if (!editor) {
       this.statusBarItem.hide();
+      this.clearAfterTextDecoration();
       return;
     }
 
@@ -584,8 +588,9 @@ export class BlameLensManager {
         });
       }
       
-      // Hide status bar while loading
+      // Hide status bar and after-text while loading
       this.statusBarItem.hide();
+      this.clearAfterTextDecoration();
       return;
     }
 
@@ -620,6 +625,9 @@ export class BlameLensManager {
       if (!this.toggleAICodeEnabled) {
         this.applyDecorationsForPrompt(editor, lineInfo.commitHash, this.currentBlameResult);
       }
+      
+      // Show after-text decoration with hover for AI lines
+      this.updateAfterTextDecoration(editor, lineInfo, document.uri);
     } else {
       // Show human icon for human-authored code
       this.statusBarItem.text = '🧑‍💻';
@@ -630,6 +638,9 @@ export class BlameLensManager {
       if (!this.toggleAICodeEnabled) {
         this.clearColoredBorders(editor);
       }
+      
+      // Clear after-text decoration for human lines
+      this.clearAfterTextDecoration();
     }
     
     // Make sure the status bar is visible (may have been hidden during loading)
@@ -888,6 +899,78 @@ export class BlameLensManager {
     this.colorDecorations.forEach(decoration => {
       editor.setDecorations(decoration, []);
     });
+  }
+
+  /**
+   * Update the after-text decoration for the current cursor line.
+   * Shows "[View $MODEL Thread]" with hover content for AI-authored lines.
+   */
+  private updateAfterTextDecoration(
+    editor: vscode.TextEditor | undefined,
+    lineInfo: LineBlameInfo | undefined,
+    documentUri?: vscode.Uri
+  ): void {
+    // Dispose previous decoration since text is dynamic per model
+    if (this.afterTextDecoration) {
+      this.afterTextDecoration.dispose();
+      this.afterTextDecoration = null;
+    }
+
+    // Don't show if no editor or line is not AI-authored
+    if (!editor || !lineInfo?.isAiAuthored) {
+      return;
+    }
+
+    // Extract model name for display
+    const model = lineInfo.promptRecord?.agent_id?.model;
+    const tool = lineInfo.promptRecord?.agent_id?.tool || lineInfo.author;
+    const modelName = this.extractModelName(model);
+    
+    // Build display text: prefer model name, fall back to tool name, then "AI"
+    let displayName: string;
+    if (modelName) {
+      displayName = modelName;
+    } else if (tool) {
+      displayName = tool.charAt(0).toUpperCase() + tool.slice(1);
+    } else {
+      displayName = 'AI';
+    }
+
+    // Get the color for this prompt (matches gutter stripe)
+    const colorIndex = this.getColorIndexForPromptId(lineInfo.commitHash);
+    const gutterColorHex = this.rgbaToHex(this.filteredColors[colorIndex] || this.HUNK_COLORS[colorIndex]);
+
+    // Create decoration type with after-text styling
+    this.afterTextDecoration = vscode.window.createTextEditorDecorationType({
+      after: {
+        contentText: ` + ${displayName}`,
+        color: gutterColorHex,
+        
+      },
+      overviewRulerLane: vscode.OverviewRulerLane.Left,
+    });
+
+    // Build hover content (reuse existing method)
+    const hoverContent = this.buildHoverContent(lineInfo, documentUri);
+
+    // Apply decoration to current line with hover
+    const currentLine = editor.selection.active.line;
+    const decorationOptions: vscode.DecorationOptions = {
+      range: new vscode.Range(currentLine, Number.MAX_SAFE_INTEGER, currentLine, Number.MAX_SAFE_INTEGER),
+      hoverMessage: hoverContent,
+    };
+
+    editor.setDecorations(this.afterTextDecoration, [decorationOptions]);
+  }
+
+  /**
+   * Clear the after-text decoration.
+   */
+  private clearAfterTextDecoration(): void {
+    if (this.afterTextDecoration) {
+      this.afterTextDecoration.dispose();
+      this.afterTextDecoration = null;
+    }
   }
 
   /**
@@ -1298,6 +1381,12 @@ export class BlameLensManager {
     
     // Dispose all color decorations
     this.colorDecorations.forEach(decoration => decoration.dispose());
+    
+    // Dispose after-text decoration
+    if (this.afterTextDecoration) {
+      this.afterTextDecoration.dispose();
+      this.afterTextDecoration = null;
+    }
   }
 }
 
