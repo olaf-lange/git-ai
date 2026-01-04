@@ -98,10 +98,13 @@ pub fn handle_flush_logs(args: &[String]) {
 
     // Try to get repository info for metadata
     let repo = find_repository_in_path(&repo_root.to_string_lossy()).ok();
-    let remotes_info = repo
+    let remotes_info: Vec<(String, String)> = repo
         .as_ref()
         .and_then(|r| r.remotes_with_urls().ok())
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(name, url)| (name, sanitize_git_url(&url)))
+        .collect();
 
     // Get or create distinct_id from ~/.git-ai/internal/distinct_id
     let distinct_id = get_or_create_distinct_id();
@@ -611,6 +614,32 @@ fn send_envelope_to_posthog(
         Ok(_) => true,
         Err(_) => false,
     }
+}
+
+/// Sanitize git URLs by replacing passwords with asterisks
+/// Handles URLs like: https://username:password@github.com/repo.git
+fn sanitize_git_url(url: &str) -> String {
+    // Look for the pattern: ://username:password@
+    if let Some(protocol_end) = url.find("://") {
+        let after_protocol = &url[protocol_end + 3..];
+
+        // Check if there's an @ symbol (indicating credentials)
+        if let Some(at_pos) = after_protocol.find('@') {
+            let credentials_part = &after_protocol[..at_pos];
+
+            // Check if there's a colon in the credentials (indicating password)
+            if let Some(colon_pos) = credentials_part.find(':') {
+                let username = &credentials_part[..colon_pos];
+                let host_part = &after_protocol[at_pos..];
+
+                // Reconstruct URL with password replaced by asterisks
+                return format!("{}://{}:*****{}", &url[..protocol_end], username, host_part);
+            }
+        }
+    }
+
+    // If no password pattern found, return original URL
+    url.to_string()
 }
 
 /// Get or create the distinct_id (UUID) from ~/.git-ai/internal/distinct_id
