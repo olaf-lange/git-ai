@@ -72,13 +72,9 @@ impl AgentCheckpointPreset for ClaudePreset {
                 )
             })?;
 
-        // Read the file content
-        let jsonl_content =
-            std::fs::read_to_string(transcript_path).map_err(|e| GitAiError::IoError(e))?;
-
         // Parse into transcript and extract model
         let (transcript, model) =
-            match ClaudePreset::transcript_and_model_from_claude_code_jsonl(&jsonl_content) {
+            match ClaudePreset::transcript_and_model_from_claude_code_jsonl(transcript_path) {
                 Ok((transcript, model)) => (transcript, model),
                 Err(e) => {
                     eprintln!("[Warning] Failed to parse Claude JSONL: {e}");
