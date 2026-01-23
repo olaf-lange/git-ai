@@ -361,6 +361,32 @@ if (Test-Path -LiteralPath $gitShim) {
 Copy-Item -Force -Path $finalExe -Destination $gitShim
 try { Unblock-File -Path $gitShim -ErrorAction SilentlyContinue } catch { }
 
+# Copy bash.exe and sh.exe for Fork compatibility (Fork validates git installations by checking for these)
+$stdGitDir = Split-Path $stdGitPath -Parent
+$stdGitBinDir = Join-Path (Split-Path $stdGitDir -Parent) 'bin'
+foreach ($shellExe in @('bash.exe', 'sh.exe')) {
+    $srcPath = Join-Path $stdGitBinDir $shellExe
+    if (-not (Test-Path $srcPath)) {
+        # Also check in the same directory as git.exe (some Git installations)
+        $srcPath = Join-Path $stdGitDir $shellExe
+    }
+    if (Test-Path $srcPath) {
+        $destPath = Join-Path $installDir $shellExe
+        # Remove existing file/link if present
+        if (Test-Path $destPath) {
+            Remove-Item -Force -Path $destPath
+        }
+        # Use hard link (works without admin if on same volume)
+        try {
+            New-Item -ItemType HardLink -Path $destPath -Target $srcPath -ErrorAction Stop | Out-Null
+        } catch {
+            # Fall back to copy if hard link fails (e.g., different volumes)
+            Copy-Item -Force -Path $srcPath -Destination $destPath
+        }
+        try { Unblock-File -Path $destPath -ErrorAction SilentlyContinue } catch { }
+    }
+}
+
 # Create a shim so calling `git-og` invokes the standard Git
 $gitOgShim = Join-Path $installDir 'git-og.cmd'
 $gitOgShimContent = "@echo off$([Environment]::NewLine)`"$stdGitPath`" %*$([Environment]::NewLine)"

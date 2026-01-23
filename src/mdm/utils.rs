@@ -316,6 +316,14 @@ pub fn git_shim_path() -> PathBuf {
         })
 }
 
+/// Get the git shim path as a string (for use in settings files)
+#[cfg(windows)]
+pub fn git_shim_path_string() -> String {
+    git_shim_path()
+        .to_string_lossy()
+        .to_string()
+}
+
 /// Update the git.path setting in a VS Code/Cursor settings file
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn update_git_path_setting(

@@ -125,12 +125,13 @@ impl GitClientInstaller for SublimeMergeInstaller {
         }
 
         let current_git_binary = Self::read_git_binary();
-        let desired_path = params.git_shim_path.to_string_lossy();
+        // Use forward slashes for JSON compatibility on Windows
+        let desired_path = params.git_shim_path.to_string_lossy().replace('\\', "/");
 
         let prefs_configured = current_git_binary.is_some();
         let prefs_up_to_date = current_git_binary
             .as_ref()
-            .map(|p| p == desired_path.as_ref())
+            .map(|p| p == &desired_path)
             .unwrap_or(false);
 
         Ok(GitClientCheckResult {
@@ -156,7 +157,8 @@ impl GitClientInstaller for SublimeMergeInstaller {
         }
 
         let prefs_path = Self::prefs_path();
-        let git_wrapper_path = params.git_shim_path.to_string_lossy();
+        // Use forward slashes for JSON compatibility on Windows
+        let git_wrapper_path = params.git_shim_path.to_string_lossy().replace('\\', "/");
 
         // Read existing content
         let original = if prefs_path.exists() {
@@ -191,7 +193,7 @@ impl GitClientInstaller for SublimeMergeInstaller {
                 let should_update = match prop.value() {
                     Some(node) => match node.as_string_lit() {
                         Some(string_node) => match string_node.decoded_value() {
-                            Ok(existing_value) => existing_value != git_wrapper_path.as_ref(),
+                            Ok(existing_value) => existing_value != git_wrapper_path,
                             Err(_) => true,
                         },
                         None => true,
@@ -200,12 +202,12 @@ impl GitClientInstaller for SublimeMergeInstaller {
                 };
 
                 if should_update {
-                    prop.set_value(jsonc_parser::json!(git_wrapper_path.as_ref()));
+                    prop.set_value(jsonc_parser::json!(git_wrapper_path.as_str()));
                     changed = true;
                 }
             }
             None => {
-                object.append("git_binary", jsonc_parser::json!(git_wrapper_path.as_ref()));
+                object.append("git_binary", jsonc_parser::json!(git_wrapper_path.as_str()));
                 changed = true;
             }
         }

@@ -29,8 +29,17 @@ pub fn ensure_git_symlinks() -> Result<(), GitAiError> {
     // Create symlink: base_dir/libexec -> /usr/libexec
     let symlink_path = base_dir.join("libexec");
 
-    // Remove existing symlink if present
+    // Remove existing symlink/junction if present
     if symlink_path.exists() || symlink_path.symlink_metadata().is_ok() {
+        // On Windows, junctions are directories, so use remove_dir
+        #[cfg(windows)]
+        {
+            // Try remove_dir first (for junctions), then remove_file (for symlinks)
+            if std::fs::remove_dir(&symlink_path).is_err() {
+                let _ = std::fs::remove_file(&symlink_path);
+            }
+        }
+        #[cfg(unix)]
         std::fs::remove_file(&symlink_path)?;
     }
 
@@ -38,7 +47,35 @@ pub fn ensure_git_symlinks() -> Result<(), GitAiError> {
     std::os::unix::fs::symlink(libexec_target, &symlink_path)?;
 
     #[cfg(windows)]
-    std::os::windows::fs::symlink_dir(libexec_target, &symlink_path)?;
+    create_junction(&symlink_path, libexec_target)?;
+
+    Ok(())
+}
+
+/// Create a directory junction on Windows (doesn't require admin privileges)
+#[cfg(windows)]
+fn create_junction(junction_path: &std::path::Path, target: &std::path::Path) -> Result<(), GitAiError> {
+    use std::process::Command;
+
+    // Use mklink /J to create a junction - this doesn't require admin privileges
+    let status = Command::new("cmd")
+        .args([
+            "/C",
+            "mklink",
+            "/J",
+            &junction_path.to_string_lossy(),
+            &target.to_string_lossy(),
+        ])
+        .output()
+        .map_err(|e| GitAiError::Generic(format!("Failed to run mklink: {}", e)))?;
+
+    if !status.status.success() {
+        let stderr = String::from_utf8_lossy(&status.stderr);
+        return Err(GitAiError::Generic(format!(
+            "Failed to create junction: {}",
+            stderr
+        )));
+    }
 
     Ok(())
 }
