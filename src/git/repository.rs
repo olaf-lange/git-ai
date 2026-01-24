@@ -2187,8 +2187,14 @@ fn parse_diff_added_lines(diff_output: &str) -> Result<HashMap<String, Vec<u32>>
 
     for line in diff_output.lines() {
         // Track current file being diffed
+        // Git may add trailing tabs to file paths in diff output, so we trim them
+        // Git may also quote file names containing spaces: +++ "b/my file.txt"
         if line.starts_with("+++ b/") {
-            current_file = Some(line[6..].to_string());
+            current_file = Some(line[6..].trim_end().to_string());
+        } else if line.starts_with("+++ \"b/") && line.trim_end().ends_with('"') {
+            // Handle quoted path: +++ "b/my file.txt"
+            let trimmed = line.trim_end();
+            current_file = Some(trimmed[7..trimmed.len() - 1].to_string());
         } else if line.starts_with("+++ /dev/null") {
             // File was deleted
             current_file = None;
@@ -2227,8 +2233,14 @@ fn parse_diff_added_lines_with_insertions(
 
     for line in diff_output.lines() {
         // Track current file being diffed
+        // Git may add trailing tabs to file paths in diff output, so we trim them
+        // Git may also quote file names containing spaces: +++ "b/my file.txt"
         if line.starts_with("+++ b/") {
-            current_file = Some(line[6..].to_string());
+            current_file = Some(line[6..].trim_end().to_string());
+        } else if line.starts_with("+++ \"b/") && line.trim_end().ends_with('"') {
+            // Handle quoted path: +++ "b/my file.txt"
+            let trimmed = line.trim_end();
+            current_file = Some(trimmed[7..trimmed.len() - 1].to_string());
         } else if line.starts_with("+++ /dev/null") {
             // File was deleted
             current_file = None;

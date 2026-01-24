@@ -1127,3 +1127,44 @@ fn test_deletion_of_multiple_lines_by_ai() {
         "}".human(),
     ]);
 }
+
+#[test]
+fn test_ai_edits_file_with_spaces_in_filename() {
+    // Test that AI authorship tracking works correctly for files with spaces in the filename
+    // This is a potential edge case that could fail if paths aren't properly quoted
+    use std::fs;
+
+    let repo = TestRepo::new();
+    let file_path = repo.path().join("my test file.txt");
+
+    // Initial commit: Create file with spaces in name
+    fs::write(&file_path, "Line 1\nLine 2\nLine 3\n").unwrap();
+
+    repo.git_ai(&["checkpoint"]).unwrap();
+    repo.stage_all_and_commit("Initial commit with spaced filename")
+        .unwrap();
+
+    // AI adds new lines to the file
+    fs::write(
+        &file_path,
+        "Line 1\nLine 2\nAI Line 1\nAI Line 2\nLine 3\n",
+    )
+    .unwrap();
+
+    // Mark the AI-authored content with mock_ai checkpoint
+    repo.git_ai(&["checkpoint", "mock_ai", "my test file.txt"])
+        .unwrap();
+
+    repo.stage_all_and_commit("AI adds lines to file with spaces")
+        .unwrap();
+
+    // Verify line-by-line attribution
+    let mut file = repo.filename("my test file.txt");
+    file.assert_lines_and_blame(lines![
+        "Line 1".human(),
+        "Line 2".human(),
+        "AI Line 1".ai(),
+        "AI Line 2".ai(),
+        "Line 3".human(),
+    ]);
+}
