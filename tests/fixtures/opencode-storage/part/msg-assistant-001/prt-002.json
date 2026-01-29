@@ -1,0 +1,19 @@
+{
+  "type": "tool",
+  "id": "prt-002",
+  "messageID": "msg-assistant-001",
+  "tool": "edit",
+  "callID": "call-001",
+  "state": "result",
+  "input": {
+    "filePath": "/Users/test/project/index.ts",
+    "content": "// Hello World\nconsole.log('test');"
+  },
+  "output": {
+    "success": true
+  },
+  "time": {
+    "created": 1706459832000,
+    "completed": 1706459833000
+  }
+}
