@@ -214,31 +214,20 @@ async fn async_run_install(
                             }
                             has_changes = true;
                             statuses.insert(id.to_string(), InstallStatus::Installed);
+                            detailed_results.push((id.to_string(), InstallResult::installed()));
                         }
                         Ok(None) => {
                             spinner.success(&format!("{}: Hooks already up to date", name));
                             statuses.insert(id.to_string(), InstallStatus::AlreadyInstalled);
+                            detailed_results.push((id.to_string(), InstallResult::already_installed()));
                         }
                         Err(e) => {
+                            let error_msg = e.to_string();
                             spinner.error(&format!("{}: Failed to update hooks", name));
-                            eprintln!("  Error: {}", e);
+                            eprintln!("  Error: {}", error_msg);
                             statuses.insert(id.to_string(), InstallStatus::NotFound);
+                            detailed_results.push((id.to_string(), InstallResult::failed(error_msg)));
                         }
-                        has_changes = true;
-                        statuses.insert(id.to_string(), InstallStatus::Installed);
-                        detailed_results.push((id.to_string(), InstallResult::installed()));
-                    }
-                    Ok(None) => {
-                        spinner.success(&format!("{}: Hooks already up to date", name));
-                        statuses.insert(id.to_string(), InstallStatus::AlreadyInstalled);
-                        detailed_results.push((id.to_string(), InstallResult::already_installed()));
-                    }
-                    Err(e) => {
-                        let error_msg = e.to_string();
-                        spinner.error(&format!("{}: Failed to update hooks", name));
-                        eprintln!("  Error: {}", error_msg);
-                        statuses.insert(id.to_string(), InstallStatus::NotFound);
-                        detailed_results.push((id.to_string(), InstallResult::failed(error_msg)));
                     }
                 }
 
