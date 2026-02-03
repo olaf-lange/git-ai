@@ -436,7 +436,7 @@ impl<'a> Commit<'a> {
         Ok(self.parents().count())
     }
 
-    // Get the short “summary” of the git commit message. The returned message is the summary of the commit, comprising the first paragraph of the message with whitespace trimmed and squashed. None may be returned if an error occurs or if the summary is not valid utf-8.
+    // Get the short "summary" of the git commit message. The returned message is the summary of the commit, comprising the first paragraph of the message with whitespace trimmed and squashed. None may be returned if an error occurs or if the summary is not valid utf-8.
     pub fn summary(&self) -> Result<String, GitAiError> {
         let mut args = self.repo.global_args_for_exec();
         args.push("show".to_string());
@@ -444,6 +444,20 @@ impl<'a> Commit<'a> {
         args.push("--no-notes".to_string());
         args.push("--encoding=UTF-8".to_string());
         args.push("--format=%s".to_string());
+        args.push(self.oid.clone());
+        let output = exec_git(&args)?;
+        Ok(String::from_utf8(output.stdout)?.trim().to_string())
+    }
+
+    // Get the body of the git commit message (everything after the first paragraph).
+    // Returns an empty string if there is no body.
+    pub fn body(&self) -> Result<String, GitAiError> {
+        let mut args = self.repo.global_args_for_exec();
+        args.push("show".to_string());
+        args.push("-s".to_string());
+        args.push("--no-notes".to_string());
+        args.push("--encoding=UTF-8".to_string());
+        args.push("--format=%b".to_string());
         args.push(self.oid.clone());
         let output = exec_git(&args)?;
         Ok(String::from_utf8(output.stdout)?.trim().to_string())

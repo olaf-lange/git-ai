@@ -161,7 +161,7 @@ pub fn post_commit(
     let stats = stats_for_commit_stats(repo, &commit_sha, &[])?;
 
     // Record metrics for this commit
-    record_commit_metrics(repo, &commit_sha, &parent_sha, &human_author, &authorship_log, &stats);
+    record_commit_metrics(repo, &commit_sha, &parent_sha, &human_author, &authorship_log, &stats, &parent_working_log);
 
     // Write INITIAL file for uncommitted AI attributions (if any)
     if !initial_attributions.files.is_empty() {
@@ -409,6 +409,7 @@ fn record_commit_metrics(
     human_author: &str,
     authorship_log: &AuthorshipLog,
     stats: &crate::authorship::stats::CommitStats,
+    checkpoints: &[Checkpoint],
 ) {
     use crate::metrics::{record, CommittedValues, EventAttributes};
 
@@ -444,6 +445,27 @@ fn record_commit_metrics(
         .total_ai_additions(total_ai_additions)
         .total_ai_deletions(total_ai_deletions)
         .time_waiting_for_ai(time_waiting_for_ai);
+
+    // Add first checkpoint timestamp (null if no checkpoints)
+    let values = if let Some(first) = checkpoints.first() {
+        values.first_checkpoint_ts(first.timestamp)
+    } else {
+        values.first_checkpoint_ts_null()
+    };
+
+    // Add commit subject and body
+    let values = if let Ok(commit) = repo.find_commit(commit_sha.to_string()) {
+        let subject = commit.summary().unwrap_or_default();
+        let values = values.commit_subject(subject);
+        let body = commit.body().unwrap_or_default();
+        if body.is_empty() {
+            values.commit_body_null()
+        } else {
+            values.commit_body(body)
+        }
+    } else {
+        values.commit_subject_null().commit_body_null()
+    };
 
     // Build attributes - start with version
     let mut attrs = EventAttributes::with_version(env!("CARGO_PKG_VERSION"));

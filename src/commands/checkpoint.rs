@@ -29,6 +29,49 @@ struct FileLineStats {
     deletions_sloc: u32,
 }
 
+use crate::authorship::working_log::AgentId;
+
+/// Build EventAttributes with repo metadata.
+/// Reused for both AgentUsage and Checkpoint events.
+fn build_checkpoint_attrs(
+    repo: &Repository,
+    base_commit: &str,
+    agent_id: Option<&AgentId>,
+) -> crate::metrics::EventAttributes {
+    let mut attrs = crate::metrics::EventAttributes::with_version(env!("CARGO_PKG_VERSION"))
+        .base_commit_sha(base_commit);
+
+    // Add AI-specific attributes
+    if let Some(agent_id) = agent_id {
+        let prompt_id = generate_short_hash(&agent_id.id, &agent_id.tool);
+        attrs = attrs
+            .tool(&agent_id.tool)
+            .model(&agent_id.model)
+            .prompt_id(prompt_id)
+            .external_prompt_id(&agent_id.id);
+    }
+
+    // Add repo URL
+    if let Ok(Some(remote_name)) = repo.get_default_remote() {
+        if let Ok(remotes) = repo.remotes_with_urls() {
+            if let Some((_, url)) = remotes.into_iter().find(|(n, _)| n == &remote_name) {
+                if let Ok(normalized) = crate::repo_url::normalize_repo_url(&url) {
+                    attrs = attrs.repo_url(normalized);
+                }
+            }
+        }
+    }
+
+    // Add branch
+    if let Ok(head_ref) = repo.head() {
+        if let Ok(short_branch) = head_ref.shorthand() {
+            attrs = attrs.branch(short_branch);
+        }
+    }
+
+    attrs
+}
+
 pub fn run(
     repo: &Repository,
     author: &str,
@@ -361,33 +404,33 @@ pub fn run(
         ));
         checkpoints.push(checkpoint.clone());
 
+        // Build common attributes once (reused for all events)
+        let attrs = build_checkpoint_attrs(repo, &base_commit, checkpoint.agent_id.as_ref());
+
         // Record agent usage metric for AI checkpoints
         if kind != CheckpointKind::Human {
-            if let Some(agent_id) = &checkpoint.agent_id {
-                let prompt_id = generate_short_hash(&agent_id.id, &agent_id.tool);
-
+            if checkpoint.agent_id.is_some() {
                 let values = crate::metrics::AgentUsageValues::new();
-                let mut attrs =
-                    crate::metrics::EventAttributes::with_version(env!("CARGO_PKG_VERSION"))
-                        .tool(&agent_id.tool)
-                        .model(&agent_id.model)
-                        .prompt_id(prompt_id)
-                        .external_prompt_id(&agent_id.id);
-
-                // Get repo URL from default remote
-                if let Ok(Some(remote_name)) = repo.get_default_remote() {
-                    if let Ok(remotes) = repo.remotes_with_urls() {
-                        if let Some((_, url)) = remotes.into_iter().find(|(n, _)| n == &remote_name)
-                        {
-                            if let Ok(normalized) = crate::repo_url::normalize_repo_url(&url) {
-                                attrs = attrs.repo_url(normalized);
-                            }
-                        }
-                    }
-                }
-
-                crate::metrics::record(values, attrs);
+                crate::metrics::record(values, attrs.clone());
             }
+        }
+
+        // Record per-file checkpoint metrics
+        // entries and file_stats are parallel arrays (same index = same file)
+        for (entry, file_stat) in entries.iter().zip(file_stats.iter()) {
+            let values = crate::metrics::CheckpointValues::new()
+                .checkpoint_ts(checkpoint.timestamp as u64)
+                .kind(checkpoint.kind.to_str().to_string())
+                .file_path(entry.file.clone())
+                .lines_added(file_stat.additions)
+                .lines_deleted(file_stat.deletions)
+                .lines_added_sloc(file_stat.additions_sloc)
+                .lines_deleted_sloc(file_stat.deletions_sloc);
+
+            // Add checkpoint author to attrs for this event
+            let file_attrs = attrs.clone().author(&checkpoint.author);
+
+            crate::metrics::record(values, file_attrs);
         }
     }
 
