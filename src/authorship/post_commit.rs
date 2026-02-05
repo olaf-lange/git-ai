@@ -161,7 +161,7 @@ pub fn post_commit(
     let stats = stats_for_commit_stats(repo, &commit_sha, &[])?;
 
     // Record metrics for this commit
-    record_commit_metrics(repo, &commit_sha, &parent_sha, &human_author, &authorship_log, &stats);
+    record_commit_metrics(repo, &commit_sha, &parent_sha, &human_author, &authorship_log, &stats, &parent_working_log);
 
     // Write INITIAL file for uncommitted AI attributions (if any)
     if !initial_attributions.files.is_empty() {
@@ -173,8 +173,8 @@ pub fn post_commit(
     // // Clean up old working log
     repo_storage.delete_working_log_for_base_commit(&parent_sha)?;
 
-    if !supress_output {
-        // Only print stats if we're in an interactive terminal
+    if !supress_output && !Config::get().is_quiet() {
+        // Only print stats if we're in an interactive terminal and quiet mode is disabled
         let is_interactive = std::io::stdout().is_terminal();
         write_stats_to_terminal(&stats, is_interactive);
     }
@@ -409,6 +409,7 @@ fn record_commit_metrics(
     human_author: &str,
     authorship_log: &AuthorshipLog,
     stats: &crate::authorship::stats::CommitStats,
+    checkpoints: &[Checkpoint],
 ) {
     use crate::metrics::{record, CommittedValues, EventAttributes};
 
@@ -444,6 +445,27 @@ fn record_commit_metrics(
         .total_ai_additions(total_ai_additions)
         .total_ai_deletions(total_ai_deletions)
         .time_waiting_for_ai(time_waiting_for_ai);
+
+    // Add first checkpoint timestamp (null if no checkpoints)
+    let values = if let Some(first) = checkpoints.first() {
+        values.first_checkpoint_ts(first.timestamp)
+    } else {
+        values.first_checkpoint_ts_null()
+    };
+
+    // Add commit subject and body
+    let values = if let Ok(commit) = repo.find_commit(commit_sha.to_string()) {
+        let subject = commit.summary().unwrap_or_default();
+        let values = values.commit_subject(subject);
+        let body = commit.body().unwrap_or_default();
+        if body.is_empty() {
+            values.commit_body_null()
+        } else {
+            values.commit_body(body)
+        }
+    } else {
+        values.commit_subject_null().commit_body_null()
+    };
 
     // Build attributes - start with version
     let mut attrs = EventAttributes::with_version(env!("CARGO_PKG_VERSION"));
@@ -537,6 +559,42 @@ mod tests {
         assert!(
             authorship_log.attestations.is_empty(),
             "Should have empty attestations when no checkpoints exist"
+        );
+    }
+
+    #[test]
+    fn test_post_commit_utf8_filename_with_ai_attribution() {
+        // Create a repo with an initial commit
+        let tmp_repo = TmpRepo::new().unwrap();
+
+        // Create initial file and commit
+        tmp_repo.write_file("README.md", "# Test\n", true).unwrap();
+        tmp_repo.trigger_checkpoint_with_author("test_user").unwrap();
+        tmp_repo.commit_with_message("Initial commit").unwrap();
+
+        // Create a file with Chinese characters in the filename
+        let chinese_filename = "中文文件.txt";
+        tmp_repo.write_file(chinese_filename, "Hello, 世界!\n", true).unwrap();
+
+        // Trigger AI checkpoint
+        tmp_repo.trigger_checkpoint_with_ai("mock_ai", None, None).unwrap();
+
+        // Commit
+        let authorship_log = tmp_repo.commit_with_message("Add Chinese file").unwrap();
+
+        // Debug output
+        println!("Authorship log attestations: {:?}", authorship_log.attestations);
+
+        // The attestation should include the Chinese filename
+        assert_eq!(
+            authorship_log.attestations.len(),
+            1,
+            "Should have 1 attestation for the Chinese-named file"
+        );
+        assert_eq!(
+            authorship_log.attestations[0].file_path,
+            chinese_filename,
+            "File path should be the UTF-8 filename"
         );
     }
 }

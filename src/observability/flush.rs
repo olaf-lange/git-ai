@@ -43,12 +43,10 @@ pub fn handle_flush_logs(args: &[String]) {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "https://us.i.posthog.com".to_string());
 
-    // Find the .git/ai/logs directory
-    let (repo_root, logs_dir) = match find_logs_directory() {
-        Some(result) => result,
-        None => {
-            std::process::exit(1);
-        }
+    // Get the global logs directory
+    let Some(logs_dir) = get_logs_directory() else {
+        // No logs directory - nothing to do, exit successfully
+        std::process::exit(0);
     };
 
     // Check for OSS DSN: runtime env var takes precedence over build-time value
@@ -71,29 +69,28 @@ pub fn handle_flush_logs(args: &[String]) {
     let current_log_file = format!("{}.log", current_pid);
 
     // Read all log files except current PID
-    let log_files: Vec<PathBuf> = match fs::read_dir(&logs_dir) {
-        Ok(entries) => entries
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.is_file()
-                    && path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|n| n != current_log_file && n.ends_with(".log"))
-                        .unwrap_or(false)
-            })
-            .collect(),
-        Err(_) => {
-            std::process::exit(1);
-        }
-    };
+    let log_files: Vec<PathBuf> = fs::read_dir(&logs_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n != current_log_file && n.ends_with(".log"))
+                    .unwrap_or(false)
+        })
+        .collect();
 
     if log_files.is_empty() {
-        std::process::exit(1);
+        // No log files to process - nothing to do, exit successfully
+        std::process::exit(0);
     }
 
-    // Try to get repository info for metadata
+    // Try to get repository info for metadata (from current directory if in a repo)
+    let repo_root = std::env::current_dir().unwrap_or_default();
     let repo = find_repository_in_path(&repo_root.to_string_lossy()).ok();
     let remotes_info: Vec<(String, String)> = repo
         .as_ref()
@@ -210,11 +207,11 @@ pub fn handle_flush_logs(args: &[String]) {
         for file_path in files_to_delete {
             let _ = fs::remove_file(&file_path);
         }
-
-        std::process::exit(0);
-    } else {
-        std::process::exit(1);
     }
+
+    // Exit 0 - processing completed successfully even if no events were sent
+    // (e.g., debug builds skip non-metrics events, which is expected behavior)
+    std::process::exit(0);
 }
 
 /// Clean up old log files when count > 100
@@ -268,24 +265,17 @@ fn cleanup_old_logs(logs_dir: &PathBuf) {
     }
 }
 
-fn find_logs_directory() -> Option<(PathBuf, PathBuf)> {
-    let mut current = std::env::current_dir().ok()?;
-
-    loop {
-        let git_dir = current.join(".git");
-        if git_dir.exists() && git_dir.is_dir() {
-            let logs_dir = git_dir.join("ai").join("logs");
-            if logs_dir.exists() && logs_dir.is_dir() {
-                return Some((current.clone(), logs_dir));
-            }
-        }
-
-        if !current.pop() {
-            break;
-        }
+/// Get the global logs directory (~/.git-ai/internal/logs).
+/// Creates it if it doesn't exist.
+fn get_logs_directory() -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let logs_dir = home.join(".git-ai").join("internal").join("logs");
+    let _ = fs::create_dir_all(&logs_dir);
+    if logs_dir.is_dir() {
+        Some(logs_dir)
+    } else {
+        None
     }
-
-    None
 }
 
 struct SentryClient {
@@ -385,6 +375,7 @@ impl MetricsUploader {
         let client = ApiClient::new(context);
 
         let using_default_api = api_base_url == crate::config::DEFAULT_API_BASE_URL;
+
         let should_upload = !using_default_api || client.is_logged_in();
 
         Self {

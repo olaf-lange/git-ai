@@ -18,6 +18,8 @@ pub type SparseArray = HashMap<String, Value>;
 pub enum MetricEventId {
     Committed = 1,
     AgentUsage = 2,
+    InstallHooks = 3,
+    Checkpoint = 4,
 }
 
 /// Trait for event-specific values.

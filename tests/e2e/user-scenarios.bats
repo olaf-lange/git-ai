@@ -41,7 +41,7 @@ setup() {
     echo "# Test Project" > README.md
     git add README.md
     git commit -m "Initial commit"
-    git config --global init.defaultBranch main
+    git config init.defaultBranch main
     
     # Check if jq is available (needed for JSON parsing tests)
     if ! command -v jq &> /dev/null; then
@@ -710,7 +710,6 @@ EOF
 
 
 @test "squash-authorship should concatenate AI and human changes" {
-    skip "ai_accepted calculation issue - returns 5 instead of 2"
     BASE_COMMIT_SHA=$(git rev-parse HEAD)
     
     # Create initial file with 5 lines
@@ -912,7 +911,7 @@ EOF
     # - ai_accepted: 4 (all AI lines accepted)
     # - total_ai_additions: 5 (3 from commit 1 + 2 from commit 2)
     # - total_ai_deletions: 5 (2 from commit 1 + 3 from commit 2)
-    # - tool_model_breakdown.ai_additions: 5 (accumulated from both commits)
+    # - tool_model_breakdown.ai_additions: 4 (accepted + mixed in final diff)
 
     expected_json='{
         "human_additions": 2,
@@ -926,7 +925,7 @@ EOF
         "git_diff_added_lines": 6,
         "tool_model_breakdown": {
             "mock_ai::unknown": {
-                "ai_additions": 5,
+                "ai_additions": 4,
                 "mixed_additions": 0,
                 "ai_accepted": 4,
                 "total_ai_additions": 5,
@@ -956,7 +955,7 @@ EOF
 }
 
 @test "AI refactors its own code - squash-authorship should show no ai_deletions" {
-    skip "https://github.com/acunniffe/git-ai/issues/162"
+    skip "https://github.com/git-ai-project/git-ai/issues/162"
     touch fibonacci.ts
     git add fibonacci.ts
     git commit -m "Initial empty file"
@@ -1055,7 +1054,7 @@ EOF
 }
 
 @test "Two AI commits, reset last commit, then recommit" {
-    skip "https://github.com/acunniffe/git-ai/issues/169"
+    skip "https://github.com/git-ai-project/git-ai/issues/169"
     # COMMIT 1: AI creates first file
     cat > module1.py <<EOF
 def function_one():
@@ -1844,7 +1843,7 @@ EOF
     export GIT_EDITOR="echo 'Squashed: Implement user creation endpoint with validation and logging' >"
     
     # Perform the interactive rebase
-    git rebase -i --autosquash HEAD~2 2>&1 | tee /dev/stderr
+    git rebase -i --autosquash HEAD~2 2>&1
     
     unset GIT_SEQUENCE_EDITOR
     unset GIT_EDITOR

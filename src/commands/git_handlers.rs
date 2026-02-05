@@ -105,10 +105,6 @@ pub fn handle_git(args: &[String]) {
 
     let has_repo = repository_option.is_some();
 
-    if let Some(repo) = repository_option.as_ref() {
-        observability::set_repo_context(repo);
-    }
-
     let config = config::Config::get();
 
     let skip_hooks = !config.is_allowed_repository(&repository_option);

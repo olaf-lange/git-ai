@@ -90,48 +90,22 @@ static OBSERVABILITY: OnceLock<Mutex<ObservabilityInner>> = OnceLock::new();
 
 fn get_observability() -> &'static Mutex<ObservabilityInner> {
     OBSERVABILITY.get_or_init(|| {
-        Mutex::new(ObservabilityInner {
-            mode: LogMode::Buffered(Vec::new()),
-        })
+        // Initialize directly in Disk mode with global logs path
+        // All logs go to ~/.git-ai/internal/logs/{PID}.log
+        let mode = if let Some(home) = dirs::home_dir() {
+            let logs_dir = home.join(".git-ai").join("internal").join("logs");
+            if std::fs::create_dir_all(&logs_dir).is_ok() {
+                LogMode::Disk(logs_dir.join(format!("{}.log", std::process::id())))
+            } else {
+                LogMode::Buffered(Vec::new())
+            }
+        } else {
+            LogMode::Buffered(Vec::new())
+        };
+        Mutex::new(ObservabilityInner { mode })
     })
 }
 
-/// Set the repository context and flush buffered events to disk
-/// Should be called once Repository is available
-pub fn set_repo_context(repo: &crate::git::repository::Repository) {
-    let log_path = repo
-        .storage
-        .logs
-        .join(format!("{}.log", std::process::id()));
-
-    let mut obs = get_observability().lock().unwrap();
-
-    // Get buffered events
-    let buffered_events = match &obs.mode {
-        LogMode::Buffered(events) => events.clone(),
-        LogMode::Disk(_) => return, // Already set, ignore
-    };
-
-    // Switch to disk mode
-    obs.mode = LogMode::Disk(log_path.clone());
-    drop(obs); // Release lock before writing
-
-    // Flush buffered events to disk
-    if !buffered_events.is_empty() {
-        if let Ok(mut file) = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(false)
-            .open(&log_path)
-        {
-            for envelope in buffered_events {
-                if let Some(json) = envelope.to_json() {
-                    let _ = writeln!(file, "{}", json.to_string());
-                }
-            }
-        }
-    }
-}
 
 /// Append an envelope (buffer if no repo context, write to disk if context set)
 fn append_envelope(envelope: LogEnvelope) {

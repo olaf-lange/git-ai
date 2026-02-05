@@ -85,11 +85,11 @@ function Verify-Checksum {
 }
 
 # GitHub repository details
-# Replaced during release builds with the actual repository (e.g., "acunniffe/git-ai")
-# When set to __REPO_PLACEHOLDER__, defaults to "acunniffe/git-ai"
+# Replaced during release builds with the actual repository (e.g., "git-ai-project/git-ai")
+# When set to __REPO_PLACEHOLDER__, defaults to "git-ai-project/git-ai"
 $Repo = '__REPO_PLACEHOLDER__'
 if ($Repo -eq '__REPO_PLACEHOLDER__') {
-    $Repo = 'acunniffe/git-ai'
+    $Repo = 'git-ai-project/git-ai'
 }
 
 # Version placeholder - replaced during release builds with actual version (e.g., "v1.0.24")
@@ -147,14 +147,14 @@ function Get-StdGitPath {
 
     # If still not found, fail with a clear message
     if (-not $gitPath) {
-        Write-ErrorAndExit "Could not detect a standard git binary on PATH. Please ensure you have Git installed and available on your PATH. If you believe this is a bug with the installer, please file an issue at https://github.com/acunniffe/git-ai/issues."
+        Write-ErrorAndExit "Could not detect a standard git binary on PATH. Please ensure you have Git installed and available on your PATH. If you believe this is a bug with the installer, please file an issue at https://github.com/git-ai-project/git-ai/issues."
     }
 
     try {
         & $gitPath --version | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'bad' }
     } catch {
-        Write-ErrorAndExit "Detected git at $gitPath is not usable (--version failed). Please ensure you have Git installed and available on your PATH. If you believe this is a bug with the installer, please file an issue at https://github.com/acunniffe/git-ai/issues."
+        Write-ErrorAndExit "Detected git at $gitPath is not usable (--version failed). Please ensure you have Git installed and available on your PATH. If you believe this is a bug with the installer, please file an issue at https://github.com/git-ai-project/git-ai/issues."
     }
 
     return $gitPath
@@ -367,6 +367,19 @@ $gitOgShimContent = "@echo off$([Environment]::NewLine)`"$stdGitPath`" %*$([Envi
 Set-Content -Path $gitOgShim -Value $gitOgShimContent -Encoding ASCII -Force
 try { Unblock-File -Path $gitOgShim -ErrorAction SilentlyContinue } catch { }
 
+# Login user with install token if provided
+$needLogin = $false
+if ($env:INSTALL_NONCE -and $env:API_BASE) {
+    try {
+        & $finalExe exchange-nonce | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            $needLogin = $true
+        }
+    } catch {
+        $needLogin = $true
+    }
+}
+
 # Install hooks
 Write-Host 'Setting up IDE/agent hooks...'
 try {
@@ -414,3 +427,10 @@ try {
 }
 
 Write-Host 'Close and reopen your terminal and IDE sessions to use git-ai.' -ForegroundColor Yellow
+
+# If nonce exchange failed, run interactive login
+if ($needLogin) {
+    Write-Host ''
+    Write-Host 'Launching login...'
+    & $finalExe login
+}

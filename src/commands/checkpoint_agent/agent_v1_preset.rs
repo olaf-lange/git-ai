@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -16,6 +18,8 @@ enum AgentV1Input {
     Human {
         repo_working_dir: String,
         will_edit_filepaths: Option<Vec<String>>,
+        #[serde(default)]
+        dirty_files: Option<HashMap<String, String>>,
     },
     AiAgent {
         repo_working_dir: String,
@@ -24,6 +28,8 @@ enum AgentV1Input {
         agent_name: String,
         model: String,
         conversation_id: String,
+        #[serde(default)]
+        dirty_files: Option<HashMap<String, String>>,
     },
     // AiTab
 }
@@ -42,7 +48,7 @@ impl AgentCheckpointPreset for AgentV1Preset {
 
         let agent_v1_input: AgentV1Input = serde_json::from_str(&hook_input_json).map_err(|e| {
             crate::error::GitAiError::PresetError(format!(
-                "Invalid AgentV1Input JSON. Format is documented here: https://github.com/acunniffe/git-ai/blob/main/docs/add-your-agent.mdx: \n\n Error: {}",
+                "Invalid AgentV1Input JSON. Format is documented here: https://usegitai.com/docs/cli/add-your-agent: \n\n Error: {}",
                 e
             ))
         })?;
@@ -51,6 +57,7 @@ impl AgentCheckpointPreset for AgentV1Preset {
             AgentV1Input::Human {
                 repo_working_dir,
                 will_edit_filepaths,
+                dirty_files,
             } => Ok(AgentRunResult {
                 agent_id: AgentId {
                     tool: "human".to_string(),
@@ -63,7 +70,7 @@ impl AgentCheckpointPreset for AgentV1Preset {
                 transcript: None,
                 repo_working_dir: Some(repo_working_dir),
                 edited_filepaths: None,
-                dirty_files: None,
+                dirty_files,
             }),
             AgentV1Input::AiAgent {
                 edited_filepaths,
@@ -72,6 +79,7 @@ impl AgentCheckpointPreset for AgentV1Preset {
                 model,
                 conversation_id,
                 repo_working_dir,
+                dirty_files,
             } => Ok(AgentRunResult {
                 agent_id: AgentId {
                     tool: agent_name,
@@ -84,7 +92,7 @@ impl AgentCheckpointPreset for AgentV1Preset {
                 checkpoint_kind: CheckpointKind::AiAgent,
                 edited_filepaths: edited_filepaths,
                 will_edit_filepaths: None,
-                dirty_files: None,
+                dirty_files,
             }),
         }
     }

@@ -1,8 +1,8 @@
 //! Event-specific value structs for metrics.
 
 use super::pos_encoded::{
-    sparse_get_string, sparse_get_u32, sparse_get_vec_string, sparse_get_vec_u32,
-    sparse_get_vec_u64, sparse_set, string_to_json, u32_to_json, vec_string_to_json,
+    sparse_get_string, sparse_get_u32, sparse_get_u64, sparse_get_vec_string, sparse_get_vec_u32,
+    sparse_get_vec_u64, sparse_set, string_to_json, u32_to_json, u64_to_json, vec_string_to_json,
     vec_u32_to_json, vec_u64_to_json, PosEncoded, PosField,
 };
 use super::types::{EventValues, MetricEventId, SparseArray};
@@ -22,6 +22,11 @@ pub mod committed_pos {
     pub const TOTAL_AI_ADDITIONS: usize = 7;
     pub const TOTAL_AI_DELETIONS: usize = 8;
     pub const TIME_WAITING_FOR_AI: usize = 9;
+
+    // New scalar fields
+    pub const FIRST_CHECKPOINT_TS: usize = 10; // u64 (null if no checkpoints)
+    pub const COMMIT_SUBJECT: usize = 11; // String
+    pub const COMMIT_BODY: usize = 12; // String (null if empty)
 }
 
 /// Values for Event ID 1: committed
@@ -45,6 +50,9 @@ pub mod committed_pos {
 /// | 7 | total_ai_additions | Vec<u32> |
 /// | 8 | total_ai_deletions | Vec<u32> |
 /// | 9 | time_waiting_for_ai | Vec<u64> |
+/// | 10 | first_checkpoint_ts | u64 |
+/// | 11 | commit_subject | String |
+/// | 12 | commit_body | String |
 #[derive(Debug, Clone, Default)]
 pub struct CommittedValues {
     // Scalar fields
@@ -60,6 +68,11 @@ pub struct CommittedValues {
     pub total_ai_additions: PosField<Vec<u32>>,
     pub total_ai_deletions: PosField<Vec<u32>>,
     pub time_waiting_for_ai: PosField<Vec<u64>>,
+
+    // New scalar fields
+    pub first_checkpoint_ts: PosField<u64>,
+    pub commit_subject: PosField<String>,
+    pub commit_body: PosField<String>,
 }
 
 impl CommittedValues {
@@ -170,6 +183,38 @@ impl CommittedValues {
         self.time_waiting_for_ai = Some(None);
         self
     }
+
+    // Builder methods for new scalar fields
+
+    pub fn first_checkpoint_ts(mut self, value: u64) -> Self {
+        self.first_checkpoint_ts = Some(Some(value));
+        self
+    }
+
+    pub fn first_checkpoint_ts_null(mut self) -> Self {
+        self.first_checkpoint_ts = Some(None);
+        self
+    }
+
+    pub fn commit_subject(mut self, value: impl Into<String>) -> Self {
+        self.commit_subject = Some(Some(value.into()));
+        self
+    }
+
+    pub fn commit_subject_null(mut self) -> Self {
+        self.commit_subject = Some(None);
+        self
+    }
+
+    pub fn commit_body(mut self, value: impl Into<String>) -> Self {
+        self.commit_body = Some(Some(value.into()));
+        self
+    }
+
+    pub fn commit_body_null(mut self) -> Self {
+        self.commit_body = Some(None);
+        self
+    }
 }
 
 impl PosEncoded for CommittedValues {
@@ -230,6 +275,23 @@ impl PosEncoded for CommittedValues {
             vec_u64_to_json(&self.time_waiting_for_ai),
         );
 
+        // New scalar fields
+        sparse_set(
+            &mut map,
+            committed_pos::FIRST_CHECKPOINT_TS,
+            u64_to_json(&self.first_checkpoint_ts),
+        );
+        sparse_set(
+            &mut map,
+            committed_pos::COMMIT_SUBJECT,
+            string_to_json(&self.commit_subject),
+        );
+        sparse_set(
+            &mut map,
+            committed_pos::COMMIT_BODY,
+            string_to_json(&self.commit_body),
+        );
+
         map
     }
 
@@ -248,6 +310,11 @@ impl PosEncoded for CommittedValues {
             total_ai_additions: sparse_get_vec_u32(arr, committed_pos::TOTAL_AI_ADDITIONS),
             total_ai_deletions: sparse_get_vec_u32(arr, committed_pos::TOTAL_AI_DELETIONS),
             time_waiting_for_ai: sparse_get_vec_u64(arr, committed_pos::TIME_WAITING_FOR_AI),
+
+            // New scalar fields
+            first_checkpoint_ts: sparse_get_u64(arr, committed_pos::FIRST_CHECKPOINT_TS),
+            commit_subject: sparse_get_string(arr, committed_pos::COMMIT_SUBJECT),
+            commit_body: sparse_get_string(arr, committed_pos::COMMIT_BODY),
         }
     }
 }
@@ -292,6 +359,288 @@ impl PosEncoded for AgentUsageValues {
 impl EventValues for AgentUsageValues {
     fn event_id() -> MetricEventId {
         MetricEventId::AgentUsage
+    }
+
+    fn to_sparse(&self) -> SparseArray {
+        PosEncoded::to_sparse(self)
+    }
+
+    fn from_sparse(arr: &SparseArray) -> Self {
+        PosEncoded::from_sparse(arr)
+    }
+}
+
+/// Value positions for "install_hooks" event.
+/// One event per tool attempted during install-hooks.
+pub mod install_hooks_pos {
+    pub const TOOL_ID: usize = 0;   // String - tool id (e.g., "cursor", "fork")
+    pub const STATUS: usize = 1;    // String - "not_found", "installed", "already_installed", "failed"
+    pub const MESSAGE: usize = 2;   // Option<String> - error message or warnings
+}
+
+/// Values for Event ID 3: install_hooks
+///
+/// Recorded for each tool during git-ai install-hooks command.
+/// One event per tool attempted.
+///
+/// **Fields:**
+/// | Position | Name | Type |
+/// |----------|------|------|
+/// | 0 | tool_id | String |
+/// | 1 | status | String |
+/// | 2 | message | Option<String> |
+#[derive(Debug, Clone, Default)]
+pub struct InstallHooksValues {
+    pub tool_id: PosField<String>,
+    pub status: PosField<String>,
+    pub message: PosField<String>,
+}
+
+impl InstallHooksValues {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn tool_id(mut self, value: String) -> Self {
+        self.tool_id = Some(Some(value));
+        self
+    }
+
+    pub fn status(mut self, value: String) -> Self {
+        self.status = Some(Some(value));
+        self
+    }
+
+    pub fn message(mut self, value: String) -> Self {
+        self.message = Some(Some(value));
+        self
+    }
+
+    pub fn message_null(mut self) -> Self {
+        self.message = Some(None);
+        self
+    }
+}
+
+impl PosEncoded for InstallHooksValues {
+    fn to_sparse(&self) -> SparseArray {
+        let mut map = SparseArray::new();
+
+        sparse_set(
+            &mut map,
+            install_hooks_pos::TOOL_ID,
+            string_to_json(&self.tool_id),
+        );
+        sparse_set(
+            &mut map,
+            install_hooks_pos::STATUS,
+            string_to_json(&self.status),
+        );
+        sparse_set(
+            &mut map,
+            install_hooks_pos::MESSAGE,
+            string_to_json(&self.message),
+        );
+
+        map
+    }
+
+    fn from_sparse(arr: &SparseArray) -> Self {
+        Self {
+            tool_id: sparse_get_string(arr, install_hooks_pos::TOOL_ID),
+            status: sparse_get_string(arr, install_hooks_pos::STATUS),
+            message: sparse_get_string(arr, install_hooks_pos::MESSAGE),
+        }
+    }
+}
+
+impl EventValues for InstallHooksValues {
+    fn event_id() -> MetricEventId {
+        MetricEventId::InstallHooks
+    }
+
+    fn to_sparse(&self) -> SparseArray {
+        PosEncoded::to_sparse(self)
+    }
+
+    fn from_sparse(arr: &SparseArray) -> Self {
+        PosEncoded::from_sparse(arr)
+    }
+}
+
+/// Value positions for "checkpoint" event.
+/// One event per file in the checkpoint.
+pub mod checkpoint_pos {
+    pub const CHECKPOINT_TS: usize = 0; // u64 - checkpoint timestamp
+    pub const KIND: usize = 1; // String ("human", "ai_agent", "ai_tab")
+    pub const FILE_PATH: usize = 2; // String - full relative file path
+    pub const LINES_ADDED: usize = 3; // u32 - for this file
+    pub const LINES_DELETED: usize = 4; // u32 - for this file
+    pub const LINES_ADDED_SLOC: usize = 5; // u32 - for this file
+    pub const LINES_DELETED_SLOC: usize = 6; // u32 - for this file
+}
+
+/// Values for Event ID 4: checkpoint
+///
+/// Recorded for each file in a checkpoint.
+/// Uses EventAttributes for standard metadata (repo_url, author, tool, model, etc.)
+///
+/// **Fields:**
+/// | Position | Name | Type |
+/// |----------|------|------|
+/// | 0 | checkpoint_ts | u64 |
+/// | 1 | kind | String |
+/// | 2 | file_path | String |
+/// | 3 | lines_added | u32 |
+/// | 4 | lines_deleted | u32 |
+/// | 5 | lines_added_sloc | u32 |
+/// | 6 | lines_deleted_sloc | u32 |
+#[derive(Debug, Clone, Default)]
+pub struct CheckpointValues {
+    pub checkpoint_ts: PosField<u64>,
+    pub kind: PosField<String>,
+    pub file_path: PosField<String>,
+    pub lines_added: PosField<u32>,
+    pub lines_deleted: PosField<u32>,
+    pub lines_added_sloc: PosField<u32>,
+    pub lines_deleted_sloc: PosField<u32>,
+}
+
+impl CheckpointValues {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn checkpoint_ts(mut self, value: u64) -> Self {
+        self.checkpoint_ts = Some(Some(value));
+        self
+    }
+
+    pub fn checkpoint_ts_null(mut self) -> Self {
+        self.checkpoint_ts = Some(None);
+        self
+    }
+
+    pub fn kind(mut self, value: impl Into<String>) -> Self {
+        self.kind = Some(Some(value.into()));
+        self
+    }
+
+    pub fn kind_null(mut self) -> Self {
+        self.kind = Some(None);
+        self
+    }
+
+    pub fn file_path(mut self, value: impl Into<String>) -> Self {
+        self.file_path = Some(Some(value.into()));
+        self
+    }
+
+    pub fn file_path_null(mut self) -> Self {
+        self.file_path = Some(None);
+        self
+    }
+
+    pub fn lines_added(mut self, value: u32) -> Self {
+        self.lines_added = Some(Some(value));
+        self
+    }
+
+    pub fn lines_added_null(mut self) -> Self {
+        self.lines_added = Some(None);
+        self
+    }
+
+    pub fn lines_deleted(mut self, value: u32) -> Self {
+        self.lines_deleted = Some(Some(value));
+        self
+    }
+
+    pub fn lines_deleted_null(mut self) -> Self {
+        self.lines_deleted = Some(None);
+        self
+    }
+
+    pub fn lines_added_sloc(mut self, value: u32) -> Self {
+        self.lines_added_sloc = Some(Some(value));
+        self
+    }
+
+    pub fn lines_added_sloc_null(mut self) -> Self {
+        self.lines_added_sloc = Some(None);
+        self
+    }
+
+    pub fn lines_deleted_sloc(mut self, value: u32) -> Self {
+        self.lines_deleted_sloc = Some(Some(value));
+        self
+    }
+
+    pub fn lines_deleted_sloc_null(mut self) -> Self {
+        self.lines_deleted_sloc = Some(None);
+        self
+    }
+}
+
+impl PosEncoded for CheckpointValues {
+    fn to_sparse(&self) -> SparseArray {
+        let mut map = SparseArray::new();
+
+        sparse_set(
+            &mut map,
+            checkpoint_pos::CHECKPOINT_TS,
+            u64_to_json(&self.checkpoint_ts),
+        );
+        sparse_set(
+            &mut map,
+            checkpoint_pos::KIND,
+            string_to_json(&self.kind),
+        );
+        sparse_set(
+            &mut map,
+            checkpoint_pos::FILE_PATH,
+            string_to_json(&self.file_path),
+        );
+        sparse_set(
+            &mut map,
+            checkpoint_pos::LINES_ADDED,
+            u32_to_json(&self.lines_added),
+        );
+        sparse_set(
+            &mut map,
+            checkpoint_pos::LINES_DELETED,
+            u32_to_json(&self.lines_deleted),
+        );
+        sparse_set(
+            &mut map,
+            checkpoint_pos::LINES_ADDED_SLOC,
+            u32_to_json(&self.lines_added_sloc),
+        );
+        sparse_set(
+            &mut map,
+            checkpoint_pos::LINES_DELETED_SLOC,
+            u32_to_json(&self.lines_deleted_sloc),
+        );
+
+        map
+    }
+
+    fn from_sparse(arr: &SparseArray) -> Self {
+        Self {
+            checkpoint_ts: sparse_get_u64(arr, checkpoint_pos::CHECKPOINT_TS),
+            kind: sparse_get_string(arr, checkpoint_pos::KIND),
+            file_path: sparse_get_string(arr, checkpoint_pos::FILE_PATH),
+            lines_added: sparse_get_u32(arr, checkpoint_pos::LINES_ADDED),
+            lines_deleted: sparse_get_u32(arr, checkpoint_pos::LINES_DELETED),
+            lines_added_sloc: sparse_get_u32(arr, checkpoint_pos::LINES_ADDED_SLOC),
+            lines_deleted_sloc: sparse_get_u32(arr, checkpoint_pos::LINES_DELETED_SLOC),
+        }
+    }
+}
+
+impl EventValues for CheckpointValues {
+    fn event_id() -> MetricEventId {
+        MetricEventId::Checkpoint
     }
 
     fn to_sparse(&self) -> SparseArray {

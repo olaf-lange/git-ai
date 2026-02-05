@@ -8,6 +8,7 @@ use crate::commands::checkpoint_agent::agent_presets::{
     ContinueCliPreset, CursorPreset, DroidPreset, GeminiPreset, GithubCopilotPreset,
 };
 use crate::commands::checkpoint_agent::agent_v1_preset::AgentV1Preset;
+use crate::commands::checkpoint_agent::opencode_preset::OpenCodePreset;
 use crate::config;
 use crate::git::find_repository;
 use crate::git::find_repository_in_path;
@@ -28,11 +29,6 @@ pub fn handle_git_ai(args: &[String]) {
 
     let current_dir = env::current_dir().unwrap().to_string_lossy().to_string();
     let repository_option = find_repository_in_path(&current_dir).ok();
-
-    // Set repo context to flush buffered events
-    if let Some(repo) = repository_option.as_ref() {
-        observability::set_repo_context(repo);
-    }
 
     let config = config::Config::get();
 
@@ -147,6 +143,9 @@ pub fn handle_git_ai(args: &[String]) {
         }
         "logout" => {
             commands::logout::handle_logout(&args[1..]);
+        }
+        "exchange-nonce" => {
+            commands::exchange_nonce::handle_exchange_nonce(&args[1..]);
         }
         "dash" | "dashboard" => {
             commands::personal_dashboard::handle_personal_dashboard(&args[1..]);
@@ -422,6 +421,22 @@ fn handle_checkpoint(args: &[String]) {
                     }
                     Err(e) => {
                         eprintln!("Droid preset error: {}", e);
+                        std::process::exit(0);
+                    }
+                }
+            }
+            "opencode" => {
+                match OpenCodePreset.run(AgentCheckpointFlags {
+                    hook_input: hook_input.clone(),
+                }) {
+                    Ok(agent_run) => {
+                        if agent_run.repo_working_dir.is_some() {
+                            repository_working_dir = agent_run.repo_working_dir.clone().unwrap();
+                        }
+                        agent_run_result = Some(agent_run);
+                    }
+                    Err(e) => {
+                        eprintln!("OpenCode preset error: {}", e);
                         std::process::exit(0);
                     }
                 }

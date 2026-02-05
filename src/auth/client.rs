@@ -43,6 +43,53 @@ impl OAuthClient {
         Self { base_url }
     }
 
+    /// Create an OAuthClient with a custom base URL (for install script flow)
+    pub fn with_base_url(base_url: &str) -> Result<Self, String> {
+        validate_https_url(base_url)?;
+        Ok(Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+        })
+    }
+
+    /// Common token exchange logic - POST to /worker/oauth/token with given body
+    fn exchange_token(&self, body: serde_json::Value) -> Result<StoredCredentials, String> {
+        let url = format!("{}/worker/oauth/token", self.base_url);
+
+        let response = ApiContext::http_post(&url)
+            .with_header("Content-Type", "application/json")
+            .with_body(body.to_string())
+            .with_timeout(30)
+            .send()
+            .map_err(|e| format!("Failed to connect to server: {}", e))?;
+
+        let response_body = response
+            .as_str()
+            .map_err(|e| format!("Invalid response encoding: {}", e))?;
+
+        if response.status_code != 200 {
+            let error: OAuthError = serde_json::from_str(response_body).unwrap_or(OAuthError {
+                error: "unknown_error".to_string(),
+                error_description: None,
+            });
+
+            let msg = error
+                .error_description
+                .unwrap_or_else(|| error.error.clone());
+            return Err(msg);
+        }
+
+        let token_response: TokenResponse = serde_json::from_str(response_body)
+            .map_err(|e| format!("Invalid token response: {}", e))?;
+
+        let now = chrono::Utc::now().timestamp();
+        Ok(StoredCredentials {
+            access_token: token_response.access_token,
+            refresh_token: token_response.refresh_token,
+            access_token_expires_at: now + token_response.expires_in as i64,
+            refresh_token_expires_at: now + token_response.refresh_expires_in as i64,
+        })
+    }
+
     /// Start the device authorization flow
     /// Returns (device_code, user_code, verification_url, expires_in, interval)
     pub fn start_device_flow(&self) -> Result<DeviceAuthResponse, String> {
@@ -156,47 +203,26 @@ impl OAuthClient {
 
     /// Refresh the access token using a refresh token
     pub fn refresh_access_token(&self, refresh_token: &str) -> Result<StoredCredentials, String> {
-        let url = format!("{}/worker/oauth/token", self.base_url);
-
         let body = serde_json::json!({
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
             "client_id": "git-ai-cli"
         });
 
-        let response = ApiContext::http_post(&url)
-            .with_header("Content-Type", "application/json")
-            .with_body(body.to_string())
-            .with_timeout(30)
-            .send()
-            .map_err(|e| format!("Failed to connect to server: {}", e))?;
+        self.exchange_token(body)
+            .map_err(|e| format!("Token refresh failed: {}", e))
+    }
 
-        let response_body = response
-            .as_str()
-            .map_err(|e| format!("Invalid response encoding: {}", e))?;
+    /// Exchange an install nonce for credentials (auto-login from web install page)
+    pub fn exchange_install_nonce(&self, nonce: &str) -> Result<StoredCredentials, String> {
+        let body = serde_json::json!({
+            "grant_type": "install_nonce",
+            "install_nonce": nonce,
+            "client_id": "git-ai-cli"
+        });
 
-        if response.status_code != 200 {
-            let error: OAuthError = serde_json::from_str(response_body).unwrap_or(OAuthError {
-                error: "unknown_error".to_string(),
-                error_description: None,
-            });
-
-            let msg = error
-                .error_description
-                .unwrap_or_else(|| error.error.clone());
-            return Err(format!("Token refresh failed: {}", msg));
-        }
-
-        let token_response: TokenResponse = serde_json::from_str(response_body)
-            .map_err(|e| format!("Invalid token response: {}", e))?;
-
-        let now = chrono::Utc::now().timestamp();
-        Ok(StoredCredentials {
-            access_token: token_response.access_token,
-            refresh_token: token_response.refresh_token,
-            access_token_expires_at: now + token_response.expires_in as i64,
-            refresh_token_expires_at: now + token_response.refresh_expires_in as i64,
-        })
+        self.exchange_token(body)
+            .map_err(|e| format!("Nonce exchange failed: {}", e))
     }
 }
 

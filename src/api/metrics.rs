@@ -53,6 +53,12 @@ pub fn upload_metrics_with_retry(
         .enumerate()
     {
         if attempt > 0 {
+            eprintln!(
+                "[metrics] Retrying upload after {}s delay (attempt {}/{})",
+                delay_secs,
+                attempt + 1,
+                RETRY_DELAYS_SECS.len() + 1
+            );
             std::thread::sleep(std::time::Duration::from_secs(*delay_secs));
         }
 
@@ -76,8 +82,10 @@ pub fn upload_metrics_with_retry(
             Err(e) => {
                 // Non-200 - will retry if attempts remain
                 if attempt == RETRY_DELAYS_SECS.len() {
+                    eprintln!("[metrics] All retries exhausted, giving up");
                     return Err(e);
                 }
+                eprintln!("[metrics] Upload failed: {}, will retry...", e);
             }
         }
     }
