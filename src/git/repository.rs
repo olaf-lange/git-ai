@@ -4,12 +4,12 @@ use crate::authorship::authorship_log_serialization::AuthorshipLog;
 use crate::authorship::rebase_authorship::rewrite_authorship_if_needed;
 use crate::config;
 use crate::error::GitAiError;
-#[cfg(windows)]
-use crate::utils::is_interactive_terminal;
 use crate::git::refs::get_authorship;
 use crate::git::repo_storage::RepoStorage;
 use crate::git::rewrite_log::RewriteLogEvent;
 use crate::git::sync_authorship::{fetch_authorship_notes, push_authorship_notes};
+#[cfg(windows)]
+use crate::utils::is_interactive_terminal;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -531,9 +531,8 @@ impl<'a> Commit<'a> {
     // lazy load the authorship log
     #[allow(dead_code)]
     pub fn authorship(&self) -> &AuthorshipLog {
-        self.authorship_log.get_or_init(|| {
-            get_authorship(self.repo, self.oid.as_str()).unwrap_or_default()
-        })
+        self.authorship_log
+            .get_or_init(|| get_authorship(self.repo, self.oid.as_str()).unwrap_or_default())
     }
     #[allow(dead_code)]
     pub fn authorship_uncached(&self) -> AuthorshipLog {
@@ -889,12 +888,13 @@ impl Repository {
 
         // Safely handle empty repositories
         if let Ok(head_ref) = self.head()
-            && let Ok(target) = head_ref.target() {
-                let target_string = target;
-                let refname = head_ref.name().map(|n| n.to_string());
-                self.pre_command_base_commit = Some(target_string);
-                self.pre_command_refname = refname;
-            }
+            && let Ok(target) = head_ref.target()
+        {
+            let target_string = target;
+            let refname = head_ref.name().map(|n| n.to_string());
+            self.pre_command_base_commit = Some(target_string);
+            self.pre_command_refname = refname;
+        }
     }
 
     pub fn handle_rewrite_log_event(
@@ -916,7 +916,8 @@ impl Repository {
                 commit_author,
                 &log,
                 supress_output,
-            ) {  }
+            )
+        {}
     }
 
     // Internal util to get the git object type for a given OID
@@ -1089,9 +1090,9 @@ impl Repository {
                         if re.is_match(&full_key)
                             && let Some(value) =
                                 section.body().value(value_name).map(|c| c.to_string())
-                            {
-                                matches.insert(full_key, value);
-                            }
+                        {
+                            matches.insert(full_key, value);
+                        }
                     }
                 }
                 Ok(matches)
@@ -1316,12 +1317,7 @@ impl Repository {
         let first_commit = commits.first().unwrap().to_string();
         let last_commit = commits.last().unwrap().to_string();
 
-        CommitRange::new(
-            self,
-            first_commit,
-            last_commit,
-            fq_branch.to_string(),
-        )
+        CommitRange::new(self, first_commit, last_commit, fq_branch.to_string())
     }
 
     // Create new commit in the repository If the update_ref is not None, name of the reference that will be updated to point to this commit. If the reference is not direct, it will be resolved to a direct reference. Use "HEAD" to update the HEAD of the current branch and make it point to this commit. If the reference doesn't exist yet, it will be created. If it does exist, the first parent must be the tip of this branch.
@@ -1468,9 +1464,10 @@ impl Repository {
         // Prefer 'origin' if it exists
         for i in 0..remotes.len() {
             if let Some(name) = remotes.get(i)
-                && name == "origin" {
-                    return Ok(Some("origin".to_string()));
-                }
+                && name == "origin"
+            {
+                return Ok(Some("origin".to_string()));
+            }
         }
         // Otherwise, just use the first remote
         Ok(remotes.first().map(|s| s.to_string()))
@@ -2027,11 +2024,13 @@ pub fn find_repository_for_file(
             if git_path.is_file() {
                 // This is a submodule - read the file to check if it points to modules/
                 if let Ok(content) = std::fs::read_to_string(&git_path)
-                    && content.contains("gitdir:") && content.contains("/modules/") {
-                        // This is a submodule, skip it and continue searching up
-                        current_dir = dir.parent();
-                        continue;
-                    }
+                    && content.contains("gitdir:")
+                    && content.contains("/modules/")
+                {
+                    // This is a submodule, skip it and continue searching up
+                    current_dir = dir.parent();
+                    continue;
+                }
             }
 
             // Found a real git repository, use find_repository_in_path
@@ -2268,8 +2267,9 @@ fn parse_diff_added_lines(diff_output: &str) -> Result<HashMap<String, Vec<u32>>
             if let Some(quoted_suffix) = line.strip_prefix("+++ ") {
                 let unescaped = crate::utils::unescape_git_path(quoted_suffix);
                 // Strip the prefix (b/ or w/) after unescaping
-                let file_path = if let Some(stripped) =
-                    unescaped.strip_prefix("b/").or(unescaped.strip_prefix("w/"))
+                let file_path = if let Some(stripped) = unescaped
+                    .strip_prefix("b/")
+                    .or(unescaped.strip_prefix("w/"))
                 {
                     stripped.to_string()
                 } else {
@@ -2283,12 +2283,10 @@ fn parse_diff_added_lines(diff_output: &str) -> Result<HashMap<String, Vec<u32>>
         } else if line.starts_with("@@ ") {
             // Parse hunk header: @@ -old_start,old_count +new_start,new_count @@
             if let Some(ref file) = current_file
-                && let Some((added_lines, _is_pure_insertion)) = parse_hunk_header(line) {
-                    result
-                        .entry(file.clone())
-                        .or_default()
-                        .extend(added_lines);
-                }
+                && let Some((added_lines, _is_pure_insertion)) = parse_hunk_header(line)
+            {
+                result.entry(file.clone()).or_default().extend(added_lines);
+            }
         }
     }
 
@@ -2332,8 +2330,9 @@ fn parse_diff_added_lines_with_insertions(
             if let Some(quoted_suffix) = line.strip_prefix("+++ ") {
                 let unescaped = crate::utils::unescape_git_path(quoted_suffix);
                 // Strip the prefix (b/ or w/) after unescaping
-                let file_path = if let Some(stripped) =
-                    unescaped.strip_prefix("b/").or(unescaped.strip_prefix("w/"))
+                let file_path = if let Some(stripped) = unescaped
+                    .strip_prefix("b/")
+                    .or(unescaped.strip_prefix("w/"))
                 {
                     stripped.to_string()
                 } else {
@@ -2347,19 +2346,20 @@ fn parse_diff_added_lines_with_insertions(
         } else if line.starts_with("@@ ") {
             // Parse hunk header: @@ -old_start,old_count +new_start,new_count @@
             if let Some(ref file) = current_file
-                && let Some((added_lines, is_pure_insertion)) = parse_hunk_header(line) {
-                    all_lines
+                && let Some((added_lines, is_pure_insertion)) = parse_hunk_header(line)
+            {
+                all_lines
+                    .entry(file.clone())
+                    .or_default()
+                    .extend(added_lines.clone());
+
+                if is_pure_insertion {
+                    insertion_lines
                         .entry(file.clone())
                         .or_default()
-                        .extend(added_lines.clone());
-
-                    if is_pure_insertion {
-                        insertion_lines
-                            .entry(file.clone())
-                            .or_default()
-                            .extend(added_lines);
-                    }
+                        .extend(added_lines);
                 }
+            }
         }
     }
 
@@ -2499,10 +2499,14 @@ mod tests {
 
         // Write a file with Chinese characters in its name
         let chinese_filename = "中文文件.txt";
-        tmp_repo.write_file(chinese_filename, "Hello, 世界!\n", false).unwrap();
+        tmp_repo
+            .write_file(chinese_filename, "Hello, 世界!\n", false)
+            .unwrap();
 
         // Create an initial commit (using trigger_checkpoint_with_author for human checkpoint)
-        tmp_repo.trigger_checkpoint_with_author("test_user").unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
         let _authorship_log = tmp_repo.commit_with_message("Add Chinese file").unwrap();
 
         // Now get the commit SHA using git-ai repository methods

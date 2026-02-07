@@ -73,10 +73,8 @@ pub fn handle_flush_cas(_args: &[String]) {
                 Err(e) => {
                     // Mark as failed if we can't parse the JSON
                     let mut db_lock = db.lock().unwrap();
-                    let _ = db_lock.update_cas_sync_failure(
-                        record.id,
-                        &format!("JSON parse error: {}", e),
-                    );
+                    let _ = db_lock
+                        .update_cas_sync_failure(record.id, &format!("JSON parse error: {}", e));
                     eprintln!(
                         "  ✗ Failed {} (parse error): {}",
                         &record.hash[..16.min(record.hash.len())],
@@ -120,8 +118,7 @@ pub fn handle_flush_cas(_args: &[String]) {
                             }
                         } else {
                             // Failed - update error
-                            let error =
-                                result.error.unwrap_or_else(|| "Unknown error".to_string());
+                            let error = result.error.unwrap_or_else(|| "Unknown error".to_string());
 
                             // Log to Sentry
                             log_error(
@@ -169,10 +166,12 @@ pub fn handle_flush_cas(_args: &[String]) {
                 let mut db_lock = db.lock().unwrap();
                 for record in batch.iter() {
                     let hash_short = &record.hash[..16.min(record.hash.len())];
-                    if let Err(update_err) =
-                        db_lock.update_cas_sync_failure(record.id, &error_msg)
+                    if let Err(update_err) = db_lock.update_cas_sync_failure(record.id, &error_msg)
                     {
-                        eprintln!("  ✗ Failed to update error for {}: {}", hash_short, update_err);
+                        eprintln!(
+                            "  ✗ Failed to update error for {}: {}",
+                            hash_short, update_err
+                        );
                     } else {
                         eprintln!(
                             "  ✗ Failed {} (attempt {}): {}",

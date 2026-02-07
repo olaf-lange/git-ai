@@ -197,10 +197,9 @@ impl Repository {
         options: &GitAiBlameOptions,
     ) -> Result<(HashMap<u32, String>, HashMap<String, PromptRecord>), GitAiError> {
         // Use repo root for file system operations
-        let repo_root = self.workdir().map_err(|e| GitAiError::Generic(format!(
-                "Repository has no working directory: {}",
-                e
-            )))?;
+        let repo_root = self.workdir().map_err(|e| {
+            GitAiError::Generic(format!("Repository has no working directory: {}", e))
+        })?;
 
         // Normalize the file path to be relative to repo root
         // This is important for AI authorship lookup which stores paths relative to repo root
@@ -735,8 +734,7 @@ impl Repository {
                             file_path,
                             orig_line_num,
                             &mut foreign_prompts_cache,
-                        )
-                    {
+                        ) {
                         prompt_record.human_author.clone()
                     } else {
                         None
@@ -1752,12 +1750,10 @@ pub fn parse_blame_args(args: &[String]) -> Result<(String, GitAiBlameOptions), 
                         "Missing argument for --since".to_string(),
                     ));
                 }
-                options.oldest_date = Some(
-                    DateTime::parse_from_rfc3339(&args[i + 1])
-                        .map_err(|e| {
-                            GitAiError::Generic(format!("Invalid date format for --since: {}", e))
-                        })?,
-                );
+                options.oldest_date =
+                    Some(DateTime::parse_from_rfc3339(&args[i + 1]).map_err(|e| {
+                        GitAiError::Generic(format!("Invalid date format for --since: {}", e))
+                    })?);
                 i += 2;
             }
             // JSON output format

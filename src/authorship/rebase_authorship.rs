@@ -254,9 +254,9 @@ pub fn rewrite_authorship_after_squash_or_rebase(
             );
             let mut authorship_log = AuthorshipLog::new();
             authorship_log.metadata.base_commit_sha = merge_commit_sha.to_string();
-            let authorship_json = authorship_log
-                .serialize_to_string()
-                .map_err(|_| GitAiError::Generic("Failed to serialize authorship log".to_string()))?;
+            let authorship_json = authorship_log.serialize_to_string().map_err(|_| {
+                GitAiError::Generic("Failed to serialize authorship log".to_string())
+            })?;
             crate::git::refs::notes_add(repo, merge_commit_sha, &authorship_json)?;
         } else {
             // No files changed, nothing to do
@@ -434,9 +434,10 @@ pub fn rewrite_authorship_after_rebase_v2(
         let mut contents = HashMap::new();
         for file in current_va.files() {
             if let Some(char_attrs) = current_va.get_char_attributions(&file)
-                && let Some(line_attrs) = current_va.get_line_attributions(&file) {
-                    attrs.insert(file.clone(), (char_attrs.clone(), line_attrs.clone()));
-                }
+                && let Some(line_attrs) = current_va.get_line_attributions(&file)
+            {
+                attrs.insert(file.clone(), (char_attrs.clone(), line_attrs.clone()));
+            }
             if let Some(content) = current_va.get_file_content(&file) {
                 contents.insert(file, content.clone());
             }
@@ -628,9 +629,10 @@ pub fn rewrite_authorship_after_cherry_pick(
         let mut contents = HashMap::new();
         for file in current_va.files() {
             if let Some(char_attrs) = current_va.get_char_attributions(&file)
-                && let Some(line_attrs) = current_va.get_line_attributions(&file) {
-                    attrs.insert(file.clone(), (char_attrs.clone(), line_attrs.clone()));
-                }
+                && let Some(line_attrs) = current_va.get_line_attributions(&file)
+            {
+                attrs.insert(file.clone(), (char_attrs.clone(), line_attrs.clone()));
+            }
             if let Some(content) = current_va.get_file_content(&file) {
                 contents.insert(file, content.clone());
             }
@@ -1142,14 +1144,14 @@ fn transform_attributions_to_final_state(
             if let (Some(src_attrs), Some(src_content)) = (
                 source_va.get_char_attributions(&file_path),
                 source_va.get_file_content(&file_path),
-            )
-                && let Some(src_line_attrs) = source_va.get_line_attributions(&file_path) {
-                    attributions.insert(
-                        file_path.clone(),
-                        (src_attrs.clone(), src_line_attrs.clone()),
-                    );
-                    file_contents.insert(file_path, src_content.clone());
-                }
+            ) && let Some(src_line_attrs) = source_va.get_line_attributions(&file_path)
+            {
+                attributions.insert(
+                    file_path.clone(),
+                    (src_attrs.clone(), src_line_attrs.clone()),
+                );
+                file_contents.insert(file_path, src_content.clone());
+            }
             continue;
         }
 
@@ -1158,106 +1160,101 @@ fn transform_attributions_to_final_state(
         let source_content = source_va.get_file_content(&file_path);
 
         // Transform to final state
-        let mut transformed_attrs = if let (Some(attrs), Some(content)) =
-            (source_attrs, source_content)
-        {
-            // Use a dummy author for new insertions
-            let dummy_author = "__DUMMY__";
+        let mut transformed_attrs =
+            if let (Some(attrs), Some(content)) = (source_attrs, source_content) {
+                // Use a dummy author for new insertions
+                let dummy_author = "__DUMMY__";
 
-            
-
-            // Keep all attributions initially (including dummy ones)
-            tracker.update_attributions(content, &final_content, attrs, dummy_author, ts)?
-        } else {
-            Vec::new()
-        };
+                // Keep all attributions initially (including dummy ones)
+                tracker.update_attributions(content, &final_content, attrs, dummy_author, ts)?
+            } else {
+                Vec::new()
+            };
 
         // Try to restore attributions from original_head_state using line-content matching
         // This handles commit splitting where content from original_head gets re-applied
         if let Some(original_state) = original_head_state
-            && let Some(original_content) = original_state.get_file_content(&file_path) {
-                if original_content == &final_content {
-                    // The final content matches the original content exactly!
-                    // Use the original attributions
-                    if let Some(original_attrs) = original_state.get_char_attributions(&file_path) {
-                        transformed_attrs = original_attrs.clone();
-                    }
-                } else {
-                    // Use line-content matching to restore attributions for lines that existed before
-                    // Build a map of line content -> author from original state
-                    let mut original_line_to_author: HashMap<String, String> = HashMap::new();
+            && let Some(original_content) = original_state.get_file_content(&file_path)
+        {
+            if original_content == &final_content {
+                // The final content matches the original content exactly!
+                // Use the original attributions
+                if let Some(original_attrs) = original_state.get_char_attributions(&file_path) {
+                    transformed_attrs = original_attrs.clone();
+                }
+            } else {
+                // Use line-content matching to restore attributions for lines that existed before
+                // Build a map of line content -> author from original state
+                let mut original_line_to_author: HashMap<String, String> = HashMap::new();
 
-                    if let Some(original_line_attrs) =
-                        original_state.get_line_attributions(&file_path)
-                    {
-                        let original_lines: Vec<&str> = original_content.lines().collect();
+                if let Some(original_line_attrs) = original_state.get_line_attributions(&file_path)
+                {
+                    let original_lines: Vec<&str> = original_content.lines().collect();
 
-                        for line_attr in original_line_attrs {
-                            // LineAttribution is 1-indexed
-                            for line_num in line_attr.start_line..=line_attr.end_line {
-                                let line_idx = (line_num as usize).saturating_sub(1);
-                                if line_idx < original_lines.len() {
-                                    let line_content = original_lines[line_idx].to_string();
-                                    // Store all non-human attributions (AI attributions)
-                                    // VirtualAttributions normalizes humans to "human" via return_human_authors_as_human flag
-                                    // AI authors keep their tool names (mock_ai, Claude, GPT, etc.) or prompt hashes
-                                    if line_attr.author_id != "human" {
-                                        original_line_to_author
-                                            .insert(line_content, line_attr.author_id.clone());
-                                    }
+                    for line_attr in original_line_attrs {
+                        // LineAttribution is 1-indexed
+                        for line_num in line_attr.start_line..=line_attr.end_line {
+                            let line_idx = (line_num as usize).saturating_sub(1);
+                            if line_idx < original_lines.len() {
+                                let line_content = original_lines[line_idx].to_string();
+                                // Store all non-human attributions (AI attributions)
+                                // VirtualAttributions normalizes humans to "human" via return_human_authors_as_human flag
+                                // AI authors keep their tool names (mock_ai, Claude, GPT, etc.) or prompt hashes
+                                if line_attr.author_id != "human" {
+                                    original_line_to_author
+                                        .insert(line_content, line_attr.author_id.clone());
                                 }
                             }
                         }
                     }
+                }
 
-                    // Now update char attributions based on line content matching
-                    let dummy_author = "__DUMMY__";
-                    let final_lines: Vec<&str> = final_content.lines().collect();
+                // Now update char attributions based on line content matching
+                let dummy_author = "__DUMMY__";
+                let final_lines: Vec<&str> = final_content.lines().collect();
 
-                    // Convert char attributions to line attributions to process line by line
-                    let temp_line_attrs =
-                        crate::authorship::attribution_tracker::attributions_to_line_attributions(
-                            &transformed_attrs,
-                            &final_content,
-                        );
+                // Convert char attributions to line attributions to process line by line
+                let temp_line_attrs =
+                    crate::authorship::attribution_tracker::attributions_to_line_attributions(
+                        &transformed_attrs,
+                        &final_content,
+                    );
 
-                    // For each line with dummy attribution, try to restore from original
-                    for (line_idx, line_content) in final_lines.iter().enumerate() {
-                        // Check if this line has a dummy attribution
-                        let line_num = (line_idx + 1) as u32; // LineAttribution is 1-indexed
-                        let has_dummy = temp_line_attrs.iter().any(|la| {
-                            la.start_line <= line_num
-                                && la.end_line >= line_num
-                                && la.author_id == dummy_author
-                        });
+                // For each line with dummy attribution, try to restore from original
+                for (line_idx, line_content) in final_lines.iter().enumerate() {
+                    // Check if this line has a dummy attribution
+                    let line_num = (line_idx + 1) as u32; // LineAttribution is 1-indexed
+                    let has_dummy = temp_line_attrs.iter().any(|la| {
+                        la.start_line <= line_num
+                            && la.end_line >= line_num
+                            && la.author_id == dummy_author
+                    });
 
-                        if has_dummy {
-                            // Try to find this line content in original state
-                            if let Some(original_author) =
-                                original_line_to_author.get(*line_content)
-                            {
-                                // Update all char attributions on this line
-                                // Find the char range for this line
-                                let line_start_char: usize = final_lines[..line_idx]
-                                    .iter()
-                                    .map(|l| l.len() + 1) // +1 for newline
-                                    .sum();
-                                let line_end_char = line_start_char + line_content.len();
+                    if has_dummy {
+                        // Try to find this line content in original state
+                        if let Some(original_author) = original_line_to_author.get(*line_content) {
+                            // Update all char attributions on this line
+                            // Find the char range for this line
+                            let line_start_char: usize = final_lines[..line_idx]
+                                .iter()
+                                .map(|l| l.len() + 1) // +1 for newline
+                                .sum();
+                            let line_end_char = line_start_char + line_content.len();
 
-                                // Update attributions that overlap with this line
-                                for attr in &mut transformed_attrs {
-                                    if attr.author_id == dummy_author
-                                        && attr.start < line_end_char
-                                        && attr.end > line_start_char
-                                    {
-                                        attr.author_id = original_author.clone();
-                                    }
+                            // Update attributions that overlap with this line
+                            for attr in &mut transformed_attrs {
+                                if attr.author_id == dummy_author
+                                    && attr.start < line_end_char
+                                    && attr.end > line_start_char
+                                {
+                                    attr.author_id = original_author.clone();
                                 }
                             }
                         }
                     }
                 }
             }
+        }
 
         // Now filter out any remaining dummy attributions
         let dummy_author = "__DUMMY__";

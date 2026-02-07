@@ -75,8 +75,7 @@ pub struct Config {
     quiet: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum UpdateChannel {
     #[default]
     Latest,
@@ -195,16 +194,17 @@ impl Config {
     fn is_allowed_repository_with_remotes(&self, remotes: Option<&Vec<(String, String)>>) -> bool {
         // First check if repository is in exclusion list - exclusions take precedence
         if !self.exclude_repositories.is_empty()
-            && let Some(remotes) = remotes {
-                // If any remote matches the exclusion patterns, deny access
-                if remotes.iter().any(|remote| {
-                    self.exclude_repositories
-                        .iter()
-                        .any(|pattern| pattern.matches(&remote.1))
-                }) {
-                    return false;
-                }
+            && let Some(remotes) = remotes
+        {
+            // If any remote matches the exclusion patterns, deny access
+            if remotes.iter().any(|remote| {
+                self.exclude_repositories
+                    .iter()
+                    .any(|pattern| pattern.matches(&remote.1))
+            }) {
+                return false;
             }
+        }
 
         // If allowlist is empty, allow everything (unless excluded above)
         if self.allow_repositories.is_empty() {
@@ -323,7 +323,9 @@ impl Config {
 
         // Step 2: If no include list, use the global prompt_storage (legacy behavior)
         if self.include_prompts_in_repositories.is_empty() {
-            return self.prompt_storage.parse::<PromptStorageMode>()
+            return self
+                .prompt_storage
+                .parse::<PromptStorageMode>()
                 .unwrap_or(PromptStorageMode::Default);
         }
 
@@ -351,7 +353,9 @@ impl Config {
 
         if matches_include {
             // Step 3a: Repo is in include list → use primary prompt_storage
-            self.prompt_storage.parse::<PromptStorageMode>().unwrap_or(PromptStorageMode::Default)
+            self.prompt_storage
+                .parse::<PromptStorageMode>()
+                .unwrap_or(PromptStorageMode::Default)
         } else {
             // Step 4: Repo not in include list → use fallback
             self.default_prompt_storage
@@ -566,10 +570,7 @@ fn build_config() -> Config {
         });
 
     // Get quiet setting (defaults to false)
-    let quiet = file_cfg
-        .as_ref()
-        .and_then(|c| c.quiet)
-        .unwrap_or(false);
+    let quiet = file_cfg.as_ref().and_then(|c| c.quiet).unwrap_or(false);
 
     #[cfg(any(test, feature = "test-support"))]
     {
@@ -631,15 +632,16 @@ fn build_feature_flags(file_cfg: &Option<FileConfig>) -> FeatureFlags {
 fn resolve_git_path(file_cfg: &Option<FileConfig>) -> String {
     // 1) From config file
     if let Some(cfg) = file_cfg
-        && let Some(path) = cfg.git_path.as_ref() {
-            let trimmed = path.trim();
-            if !trimmed.is_empty() {
-                let p = Path::new(trimmed);
-                if is_executable(p) {
-                    return trimmed.to_string();
-                }
+        && let Some(path) = cfg.git_path.as_ref()
+    {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            let p = Path::new(trimmed);
+            if is_executable(p) {
+                return trimmed.to_string();
             }
         }
+    }
 
     // 2) Probe common locations across platforms
     let candidates: &[&str] = &[
@@ -812,9 +814,10 @@ fn is_executable(path: &Path) -> bool {
 #[cfg(any(test, feature = "test-support"))]
 fn apply_test_config_patch(config: &mut Config) {
     if let Ok(patch_json) = env::var("GIT_AI_TEST_CONFIG_PATCH")
-        && let Ok(patch) = serde_json::from_str::<ConfigPatch>(&patch_json) {
-            if let Some(patterns) = patch.exclude_prompts_in_repositories {
-                config.exclude_prompts_in_repositories = patterns
+        && let Ok(patch) = serde_json::from_str::<ConfigPatch>(&patch_json)
+    {
+        if let Some(patterns) = patch.exclude_prompts_in_repositories {
+            config.exclude_prompts_in_repositories = patterns
                     .into_iter()
                     .filter_map(|pattern_str| {
                         Pattern::new(&pattern_str)
@@ -827,28 +830,28 @@ fn apply_test_config_patch(config: &mut Config) {
                             .ok()
                     })
                     .collect();
-            }
-            if let Some(telemetry_oss_disabled) = patch.telemetry_oss_disabled {
-                config.telemetry_oss_disabled = telemetry_oss_disabled;
-            }
-            if let Some(disable_version_checks) = patch.disable_version_checks {
-                config.disable_version_checks = disable_version_checks;
-            }
-            if let Some(disable_auto_updates) = patch.disable_auto_updates {
-                config.disable_auto_updates = disable_auto_updates;
-            }
-            if let Some(prompt_storage) = patch.prompt_storage {
-                // Validate the value
-                if matches!(prompt_storage.as_str(), "default" | "notes" | "local") {
-                    config.prompt_storage = prompt_storage;
-                } else {
-                    eprintln!(
-                        "Warning: Invalid test prompt_storage value '{}', ignoring",
-                        prompt_storage
-                    );
-                }
+        }
+        if let Some(telemetry_oss_disabled) = patch.telemetry_oss_disabled {
+            config.telemetry_oss_disabled = telemetry_oss_disabled;
+        }
+        if let Some(disable_version_checks) = patch.disable_version_checks {
+            config.disable_version_checks = disable_version_checks;
+        }
+        if let Some(disable_auto_updates) = patch.disable_auto_updates {
+            config.disable_auto_updates = disable_auto_updates;
+        }
+        if let Some(prompt_storage) = patch.prompt_storage {
+            // Validate the value
+            if matches!(prompt_storage.as_str(), "default" | "notes" | "local") {
+                config.prompt_storage = prompt_storage;
+            } else {
+                eprintln!(
+                    "Warning: Invalid test prompt_storage value '{}', ignoring",
+                    prompt_storage
+                );
             }
         }
+    }
 }
 
 #[cfg(test)]

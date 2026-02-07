@@ -387,9 +387,10 @@ fn get_git_diff_stats_for_range(
 
             // Parse deleted lines (handle "-" for binary files)
             if parts[1] != "-"
-                && let Ok(deleted) = parts[1].parse::<u32>() {
-                    deleted_lines += deleted;
-                }
+                && let Ok(deleted) = parts[1].parse::<u32>()
+            {
+                deleted_lines += deleted;
+            }
         }
     }
 
@@ -414,13 +415,7 @@ fn calculate_range_stats_direct(
     let (git_diff_added_lines, git_diff_deleted_lines) =
         get_git_diff_stats_for_range(repo, &start_sha, &end_sha, ignore_patterns)?;
 
-    let diff_ai_stats = diff_ai_accepted_stats(
-        repo,
-        &start_sha,
-        &end_sha,
-        None,
-        ignore_patterns,
-    )?;
+    let diff_ai_stats = diff_ai_accepted_stats(repo, &start_sha, &end_sha, None, ignore_patterns)?;
 
     // Step 2: Create in-memory authorship log for the range, filtered to only commits in the range
     let commit_shas = commit_range.clone().all_commits();

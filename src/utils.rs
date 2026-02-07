@@ -110,18 +110,19 @@ pub fn current_git_ai_exe() -> Result<PathBuf, GitAiError> {
 
     // Check if the filename matches the git executable name for this platform
     if let Some(file_name) = path.file_name().and_then(|n| n.to_str())
-        && file_name == git_name {
-            // Try replacing with git-ai executable name for this platform
-            let git_ai_path = path.with_file_name(git_ai_name);
+        && file_name == git_name
+    {
+        // Try replacing with git-ai executable name for this platform
+        let git_ai_path = path.with_file_name(git_ai_name);
 
-            // Check if the git-ai file exists
-            if git_ai_path.exists() {
-                return Ok(git_ai_path);
-            }
-
-            // If it doesn't exist, return the git-ai executable name as a PathBuf
-            return Ok(PathBuf::from(git_ai_name));
+        // Check if the git-ai file exists
+        if git_ai_path.exists() {
+            return Ok(git_ai_path);
         }
+
+        // If it doesn't exist, return the git-ai executable name as a PathBuf
+        return Ok(PathBuf::from(git_ai_name));
+    }
 
     Ok(path)
 }
@@ -278,16 +279,10 @@ mod tests {
     #[test]
     fn test_unescape_git_path_emoji() {
         // Emoji "🚀" (rocket) = U+1F680 = \360\237\232\200 in octal UTF-8
-        assert_eq!(
-            unescape_git_path("\"\\360\\237\\232\\200.txt\""),
-            "🚀.txt"
-        );
+        assert_eq!(unescape_git_path("\"\\360\\237\\232\\200.txt\""), "🚀.txt");
 
         // Emoji "😀" (grinning face) = U+1F600 = \360\237\230\200 in octal UTF-8
-        assert_eq!(
-            unescape_git_path("\"\\360\\237\\230\\200.txt\""),
-            "😀.txt"
-        );
+        assert_eq!(unescape_git_path("\"\\360\\237\\230\\200.txt\""), "😀.txt");
 
         // Mixed: "test_🎉_file.txt" where 🎉 = \360\237\216\211
         assert_eq!(
@@ -299,7 +294,10 @@ mod tests {
     #[test]
     fn test_unescape_git_path_escaped_characters() {
         // Escaped backslash
-        assert_eq!(unescape_git_path("\"path\\\\with\\\\slashes\""), "path\\with\\slashes");
+        assert_eq!(
+            unescape_git_path("\"path\\\\with\\\\slashes\""),
+            "path\\with\\slashes"
+        );
 
         // Escaped quotes
         assert_eq!(unescape_git_path("\"file\\\"name.txt\""), "file\"name.txt");
@@ -326,7 +324,9 @@ mod tests {
     fn test_unescape_japanese_hiragana() {
         // Japanese Hiragana "ひらがな" = \343\201\262\343\202\211\343\201\214\343\201\252
         assert_eq!(
-            unescape_git_path("\"\\343\\201\\262\\343\\202\\211\\343\\201\\214\\343\\201\\252.txt\""),
+            unescape_git_path(
+                "\"\\343\\201\\262\\343\\202\\211\\343\\201\\214\\343\\201\\252.txt\""
+            ),
             "ひらがな.txt"
         );
     }
@@ -335,7 +335,9 @@ mod tests {
     fn test_unescape_japanese_katakana() {
         // Japanese Katakana "カタカナ" = \343\202\253\343\202\277\343\202\253\343\203\212
         assert_eq!(
-            unescape_git_path("\"\\343\\202\\253\\343\\202\\277\\343\\202\\253\\343\\203\\212.txt\""),
+            unescape_git_path(
+                "\"\\343\\202\\253\\343\\202\\277\\343\\202\\253\\343\\203\\212.txt\""
+            ),
             "カタカナ.txt"
         );
     }
@@ -416,7 +418,9 @@ mod tests {
     fn test_unescape_mixed_rtl_ltr() {
         // Mixed RTL/LTR: "test_مرحبا_file" (ASCII + Arabic + ASCII)
         assert_eq!(
-            unescape_git_path("\"test_\\331\\205\\330\\261\\330\\255\\330\\250\\330\\247_file.txt\""),
+            unescape_git_path(
+                "\"test_\\331\\205\\330\\261\\330\\255\\330\\250\\330\\247_file.txt\""
+            ),
             "test_مرحبا_file.txt"
         );
     }
@@ -430,7 +434,9 @@ mod tests {
         // Hindi "हिंदी" (Hindi in Devanagari script)
         // ह = \340\244\271, ि = \340\244\277, ं = \340\244\202, द = \340\244\246, ी = \340\245\200
         assert_eq!(
-            unescape_git_path("\"\\340\\244\\271\\340\\244\\277\\340\\244\\202\\340\\244\\246\\340\\245\\200.txt\""),
+            unescape_git_path(
+                "\"\\340\\244\\271\\340\\244\\277\\340\\244\\202\\340\\244\\246\\340\\245\\200.txt\""
+            ),
             "हिंदी.txt"
         );
     }
@@ -440,7 +446,9 @@ mod tests {
         // Tamil "தமிழ்" (Tamil)
         // த = \340\256\244, ம = \340\256\256, ி = \340\256\277, ழ = \340\256\264, ் = \340\257\215
         assert_eq!(
-            unescape_git_path("\"\\340\\256\\244\\340\\256\\256\\340\\256\\277\\340\\256\\264\\340\\257\\215.txt\""),
+            unescape_git_path(
+                "\"\\340\\256\\244\\340\\256\\256\\340\\256\\277\\340\\256\\264\\340\\257\\215.txt\""
+            ),
             "தமிழ்.txt"
         );
     }
@@ -450,7 +458,9 @@ mod tests {
         // Bengali "বাংলা" (Bangla)
         // ব = \340\246\254, া = \340\246\276, ং = \340\246\202, ল = \340\246\262, া = \340\246\276
         assert_eq!(
-            unescape_git_path("\"\\340\\246\\254\\340\\246\\276\\340\\246\\202\\340\\246\\262\\340\\246\\276.txt\""),
+            unescape_git_path(
+                "\"\\340\\246\\254\\340\\246\\276\\340\\246\\202\\340\\246\\262\\340\\246\\276.txt\""
+            ),
             "বাংলা.txt"
         );
     }
@@ -460,7 +470,9 @@ mod tests {
         // Telugu "తెలుగు" (Telugu)
         // త = \340\260\244, ె = \340\261\206, ల = \340\260\262, ు = \340\261\201, గ = \340\260\227, ు = \340\261\201
         assert_eq!(
-            unescape_git_path("\"\\340\\260\\244\\340\\261\\206\\340\\260\\262\\340\\261\\201\\340\\260\\227\\340\\261\\201.txt\""),
+            unescape_git_path(
+                "\"\\340\\260\\244\\340\\261\\206\\340\\260\\262\\340\\261\\201\\340\\260\\227\\340\\261\\201.txt\""
+            ),
             "తెలుగు.txt"
         );
     }
@@ -470,7 +482,9 @@ mod tests {
         // Gujarati "ગુજરાતી" (Gujarati)
         // ગ = \340\252\227, ુ = \340\253\201, જ = \340\252\234, ર = \340\252\260, ા = \340\252\276, ત = \340\252\244, ી = \340\253\200
         assert_eq!(
-            unescape_git_path("\"\\340\\252\\227\\340\\253\\201\\340\\252\\234\\340\\252\\260\\340\\252\\276\\340\\252\\244\\340\\253\\200.txt\""),
+            unescape_git_path(
+                "\"\\340\\252\\227\\340\\253\\201\\340\\252\\234\\340\\252\\260\\340\\252\\276\\340\\252\\244\\340\\253\\200.txt\""
+            ),
             "ગુજરાતી.txt"
         );
     }
@@ -504,7 +518,9 @@ mod tests {
         // Khmer "ខ្មែរ" (Khmer)
         // ខ = \341\236\201, ្ = \341\237\222, ម = \341\236\230, ែ = \341\237\202, រ = \341\236\232
         assert_eq!(
-            unescape_git_path("\"\\341\\236\\201\\341\\237\\222\\341\\236\\230\\341\\237\\202\\341\\236\\232.txt\""),
+            unescape_git_path(
+                "\"\\341\\236\\201\\341\\237\\222\\341\\236\\230\\341\\237\\202\\341\\236\\232.txt\""
+            ),
             "ខ្មែរ.txt"
         );
     }
@@ -528,7 +544,9 @@ mod tests {
         // Russian "Русский" (Russian)
         // Р = \320\240, у = \321\203, с = \321\201, к = \320\272, и = \320\270, й = \320\271
         assert_eq!(
-            unescape_git_path("\"\\320\\240\\321\\203\\321\\201\\321\\201\\320\\272\\320\\270\\320\\271.txt\""),
+            unescape_git_path(
+                "\"\\320\\240\\321\\203\\321\\201\\321\\201\\320\\272\\320\\270\\320\\271.txt\""
+            ),
             "Русский.txt"
         );
     }
@@ -538,7 +556,9 @@ mod tests {
         // Ukrainian "Україна" (Ukraine)
         // У = \320\243, к = \320\272, р = \321\200, а = \320\260, ї = \321\227, н = \320\275, а = \320\260
         assert_eq!(
-            unescape_git_path("\"\\320\\243\\320\\272\\321\\200\\320\\260\\321\\227\\320\\275\\320\\260.txt\""),
+            unescape_git_path(
+                "\"\\320\\243\\320\\272\\321\\200\\320\\260\\321\\227\\320\\275\\320\\260.txt\""
+            ),
             "Україна.txt"
         );
     }
@@ -548,7 +568,9 @@ mod tests {
         // Greek "Ελλάδα" (Greece)
         // Ε = \316\225, λ = \316\273, λ = \316\273, ά = \316\254, δ = \316\264, α = \316\261
         assert_eq!(
-            unescape_git_path("\"\\316\\225\\316\\273\\316\\273\\316\\254\\316\\264\\316\\261.txt\""),
+            unescape_git_path(
+                "\"\\316\\225\\316\\273\\316\\273\\316\\254\\316\\264\\316\\261.txt\""
+            ),
             "Ελλάδα.txt"
         );
     }
@@ -558,7 +580,9 @@ mod tests {
         // Greek polytonic "Ἑλληνική" (Hellenic with diacritics)
         // Ἑ = \341\274\231, λ = \316\273, λ = \316\273, η = \316\267, ν = \316\275, ι = \316\271, κ = \316\272, ή = \316\256
         assert_eq!(
-            unescape_git_path("\"\\341\\274\\231\\316\\273\\316\\273\\316\\267\\316\\275\\316\\271\\316\\272\\316\\256.txt\""),
+            unescape_git_path(
+                "\"\\341\\274\\231\\316\\273\\316\\273\\316\\267\\316\\275\\316\\271\\316\\272\\316\\256.txt\""
+            ),
             "Ἑλληνική.txt"
         );
     }
@@ -614,37 +638,25 @@ mod tests {
     #[test]
     fn test_unescape_math_symbols() {
         // Math symbols: ∑ (summation) = \342\210\221
-        assert_eq!(
-            unescape_git_path("\"\\342\\210\\221.txt\""),
-            "∑.txt"
-        );
+        assert_eq!(unescape_git_path("\"\\342\\210\\221.txt\""), "∑.txt");
     }
 
     #[test]
     fn test_unescape_currency_symbols() {
         // Currency: € (euro) = \342\202\254
-        assert_eq!(
-            unescape_git_path("\"\\342\\202\\254.txt\""),
-            "€.txt"
-        );
+        assert_eq!(unescape_git_path("\"\\342\\202\\254.txt\""), "€.txt");
     }
 
     #[test]
     fn test_unescape_box_drawing() {
         // Box drawing: ┌ (box drawings light down and right) = \342\224\214
-        assert_eq!(
-            unescape_git_path("\"\\342\\224\\214.txt\""),
-            "┌.txt"
-        );
+        assert_eq!(unescape_git_path("\"\\342\\224\\214.txt\""), "┌.txt");
     }
 
     #[test]
     fn test_unescape_dingbats() {
         // Dingbats: ✓ (check mark) = \342\234\223
-        assert_eq!(
-            unescape_git_path("\"\\342\\234\\223.txt\""),
-            "✓.txt"
-        );
+        assert_eq!(unescape_git_path("\"\\342\\234\\223.txt\""), "✓.txt");
     }
 
     // =========================================================================
@@ -654,10 +666,7 @@ mod tests {
     #[test]
     fn test_unescape_nfc_precomposed() {
         // NFC precomposed: é (U+00E9) = \303\251
-        assert_eq!(
-            unescape_git_path("\"caf\\303\\251.txt\""),
-            "café.txt"
-        );
+        assert_eq!(unescape_git_path("\"caf\\303\\251.txt\""), "café.txt");
     }
 
     #[test]

@@ -296,9 +296,10 @@ impl PersistedWorkingLog {
     pub fn read_current_file_content(&self, file_path: &str) -> Result<String, GitAiError> {
         // First try to read from dirty_files (using raw path)
         if let Some(ref dirty_files) = self.dirty_files
-            && let Some(content) = dirty_files.get(&file_path.to_string()) {
-                return Ok(content.clone());
-            }
+            && let Some(content) = dirty_files.get(&file_path.to_string())
+        {
+            return Ok(content.clone());
+        }
 
         let file_path = self.to_repo_absolute_path(file_path);
 
@@ -339,13 +340,15 @@ impl PersistedWorkingLog {
             // cursor can always refetch from its database
             "cursor" => false,
             // claude, gemini, continue-cli need transcript_path
-            "claude" | "gemini" | "continue-cli" => {
-                metadata.as_ref().and_then(|m| m.get("transcript_path")).is_none()
-            }
+            "claude" | "gemini" | "continue-cli" => metadata
+                .as_ref()
+                .and_then(|m| m.get("transcript_path"))
+                .is_none(),
             // github-copilot needs chat_session_path
-            "github-copilot" => {
-                metadata.as_ref().and_then(|m| m.get("chat_session_path")).is_none()
-            }
+            "github-copilot" => metadata
+                .as_ref()
+                .and_then(|m| m.get("chat_session_path"))
+                .is_none(),
             // Unknown tools (like custom agent-v1 tools) can't refetch
             _ => true,
         };
@@ -414,23 +417,26 @@ impl PersistedWorkingLog {
                 // Replace author_ids in attributions
                 for attr in &mut entry.attributions {
                     if attr.author_id.len() == 7
-                        && let Some(new_hash) = old_to_new_hash.get(&attr.author_id) {
-                            attr.author_id = new_hash.clone();
-                        }
+                        && let Some(new_hash) = old_to_new_hash.get(&attr.author_id)
+                    {
+                        attr.author_id = new_hash.clone();
+                    }
                 }
 
                 // Replace author_ids in line_attributions
                 for line_attr in &mut entry.line_attributions {
                     if line_attr.author_id.len() == 7
-                        && let Some(new_hash) = old_to_new_hash.get(&line_attr.author_id) {
-                            line_attr.author_id = new_hash.clone();
-                        }
+                        && let Some(new_hash) = old_to_new_hash.get(&line_attr.author_id)
+                    {
+                        line_attr.author_id = new_hash.clone();
+                    }
                     // Also migrate the overrode field if it contains a 7-char hash
                     if let Some(ref overrode_id) = line_attr.overrode
                         && overrode_id.len() == 7
-                            && let Some(new_hash) = old_to_new_hash.get(overrode_id) {
-                                line_attr.overrode = Some(new_hash.clone());
-                            }
+                        && let Some(new_hash) = old_to_new_hash.get(overrode_id)
+                    {
+                        line_attr.overrode = Some(new_hash.clone());
+                    }
                 }
             }
             migrated_checkpoints.push(checkpoint);
@@ -459,9 +465,10 @@ impl PersistedWorkingLog {
         for (checkpoint_idx, checkpoint) in checkpoints.iter_mut().enumerate() {
             for entry in &mut checkpoint.entries {
                 if let Some(&newest_idx) = newest_for_file.get(&entry.file)
-                    && checkpoint_idx != newest_idx {
-                        entry.attributions.clear();
-                    }
+                    && checkpoint_idx != newest_idx
+                {
+                    entry.attributions.clear();
+                }
             }
         }
     }
@@ -631,10 +638,8 @@ mod tests {
         let tmp_repo = TmpRepo::new().expect("Failed to create tmp repo");
 
         // Create RepoStorage
-        let repo_storage = RepoStorage::for_repo_path(
-            tmp_repo.repo().path(),
-            tmp_repo.repo().workdir().unwrap(),
-        );
+        let repo_storage =
+            RepoStorage::for_repo_path(tmp_repo.repo().path(), tmp_repo.repo().workdir().unwrap());
 
         // Add some content to rewrite_log
         let rewrite_log_file = tmp_repo.repo().path().join("ai").join("rewrite_log");

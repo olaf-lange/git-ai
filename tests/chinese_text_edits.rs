@@ -141,11 +141,7 @@ fn test_chinese_reflow_preserves_ai() {
     repo.stage_all_and_commit("Initial commit").unwrap();
 
     let file_path = repo.path().join("reflow.txt");
-    fs::write(
-        &file_path,
-        "调用(\n  参数一,\n  参数二,\n  参数三\n)",
-    )
-    .unwrap();
+    fs::write(&file_path, "调用(\n  参数一,\n  参数二,\n  参数三\n)").unwrap();
     repo.git_ai(&["checkpoint"]).unwrap();
     repo.stage_all_and_commit("Human reflow").unwrap();
 

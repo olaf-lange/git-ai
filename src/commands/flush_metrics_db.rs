@@ -2,7 +2,7 @@
 //!
 //! Drains the metrics database queue by uploading batches to the API.
 
-use crate::api::{upload_metrics_with_retry, ApiClient, ApiContext};
+use crate::api::{ApiClient, ApiContext, upload_metrics_with_retry};
 use crate::metrics::db::MetricsDatabase;
 use crate::metrics::{MetricEvent, MetricsBatch};
 

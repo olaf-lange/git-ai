@@ -1,9 +1,9 @@
 use crate::api::client::ApiContext;
 use crate::config::{self, UpdateChannel};
 use crate::observability::log_message;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -143,11 +143,7 @@ fn semver_from_tag(tag: &str) -> String {
         .trim()
         .trim_start_matches("enterprise-")
         .trim_start_matches('v');
-    trimmed
-        .split(['-', '+'])
-        .next()
-        .unwrap_or("")
-        .to_string()
+    trimmed.split(['-', '+']).next().unwrap_or("").to_string()
 }
 
 fn determine_action(force: bool, release: &ChannelRelease, current_version: &str) -> UpgradeAction {
@@ -233,8 +229,7 @@ fn fetch_and_verify_checksums(
         ));
     }
 
-    let content = response
-        .as_bytes();
+    let content = response.as_bytes();
 
     verify_sha256(content, expected_checksum)
         .map_err(|e| format!("SHA256SUMS verification failed: {}", e))?;
@@ -343,10 +338,7 @@ fn release_from_response(
 }
 
 #[cfg(test)]
-fn try_mock_releases(
-    base: &str,
-    channel: UpdateChannel,
-) -> Option<Result<ChannelRelease, String>> {
+fn try_mock_releases(base: &str, channel: UpdateChannel) -> Option<Result<ChannelRelease, String>> {
     let json = base.strip_prefix("mock://")?;
     Some(
         serde_json::from_str::<ReleasesResponse>(json)
@@ -590,31 +582,33 @@ fn run_impl_with_url(
     println!("Fetching and verifying release artifacts...");
 
     // Fetch and verify SHA256SUMS against the release's master checksum
-    let checksums = match fetch_and_verify_checksums(api_base_url, channel.as_str(), &release.checksum) {
-        Ok(checksums) => {
-            println!("\x1b[1;32m✓\x1b[0m SHA256SUMS verified");
-            checksums
-        }
-        Err(err) => {
-            eprintln!("Failed to fetch/verify checksums: {}", err);
-            std::process::exit(1);
-        }
-    };
+    let checksums =
+        match fetch_and_verify_checksums(api_base_url, channel.as_str(), &release.checksum) {
+            Ok(checksums) => {
+                println!("\x1b[1;32m✓\x1b[0m SHA256SUMS verified");
+                checksums
+            }
+            Err(err) => {
+                eprintln!("Failed to fetch/verify checksums: {}", err);
+                std::process::exit(1);
+            }
+        };
 
     // Fetch and verify the install script
-    let script_content = match fetch_and_verify_install_script(api_base_url, channel.as_str(), &checksums) {
-        Ok(content) => {
-            #[cfg(windows)]
-            println!("\x1b[1;32m✓\x1b[0m install.ps1 verified");
-            #[cfg(not(windows))]
-            println!("\x1b[1;32m✓\x1b[0m install.sh verified");
-            content
-        }
-        Err(err) => {
-            eprintln!("Failed to fetch/verify install script: {}", err);
-            std::process::exit(1);
-        }
-    };
+    let script_content =
+        match fetch_and_verify_install_script(api_base_url, channel.as_str(), &checksums) {
+            Ok(content) => {
+                #[cfg(windows)]
+                println!("\x1b[1;32m✓\x1b[0m install.ps1 verified");
+                #[cfg(not(windows))]
+                println!("\x1b[1;32m✓\x1b[0m install.sh verified");
+                content
+            }
+            Err(err) => {
+                eprintln!("Failed to fetch/verify install script: {}", err);
+                std::process::exit(1);
+            }
+        };
 
     println!();
     println!("Running installation script...");
@@ -690,9 +684,11 @@ pub fn maybe_schedule_background_update_check() {
 
     if config.auto_updates_disabled()
         && let Some(cache) = cache.as_ref()
-            && cache.matches_channel(channel) && cache.update_available() {
-                print_cached_notice(cache);
-            }
+        && cache.matches_channel(channel)
+        && cache.update_available()
+    {
+        print_cached_notice(cache);
+    }
 
     if !should_check_for_updates(channel, cache.as_ref()) {
         return;

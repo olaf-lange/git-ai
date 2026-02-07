@@ -388,10 +388,10 @@ pub fn overlay_diff_attributions(
         let mut options = GitAiBlameOptions::default();
         #[allow(clippy::field_reassign_with_default)]
         {
-        options.oldest_commit = Some(from_commit.to_string());
-        options.newest_commit = Some(to_commit.to_string());
-        options.line_ranges = line_ranges;
-        options.no_output = true;
+            options.oldest_commit = Some(from_commit.to_string());
+            options.newest_commit = Some(to_commit.to_string());
+            options.line_ranges = line_ranges;
+            options.no_output = true;
         }
 
         // Call blame to get attributions
@@ -637,11 +637,11 @@ fn collect_file_annotations(
     let mut options = GitAiBlameOptions::default();
     #[allow(clippy::field_reassign_with_default)]
     {
-    options.oldest_commit = Some(from_commit.to_string());
-    options.newest_commit = Some(to_commit.to_string());
-    options.line_ranges = line_ranges;
-    options.no_output = true;
-    options.use_prompt_hashes_as_names = true; // Key: get prompt hash instead of tool name
+        options.oldest_commit = Some(from_commit.to_string());
+        options.newest_commit = Some(to_commit.to_string());
+        options.line_ranges = line_ranges;
+        options.no_output = true;
+        options.use_prompt_hashes_as_names = true; // Key: get prompt hash instead of tool name
     }
 
     // Call blame to get attributions
@@ -937,7 +937,6 @@ pub struct DiffOptions {
     pub filter_to_attributed_files: bool,
 }
 
-
 /// Get diff JSON for a single commit with optional filtering by prompt attributions
 ///
 /// This function is designed for bundle sharing:
@@ -964,20 +963,26 @@ pub fn get_diff_json_filtered(
 
     // Apply filtering if requested
     if options.filter_to_attributed_files
-        && let Some(ref prompt_ids) = options.prompt_ids {
-            let prompt_id_set: std::collections::HashSet<&String> = prompt_ids.iter().collect();
+        && let Some(ref prompt_ids) = options.prompt_ids
+    {
+        let prompt_id_set: std::collections::HashSet<&String> = prompt_ids.iter().collect();
 
-            // Filter files to only those with attributions from the specified prompts
-            diff_json.files.retain(|_file_path, file_diff| {
-                // Check if any annotation key matches a prompt_id
-                file_diff.annotations.keys().any(|key| prompt_id_set.contains(key))
-            });
-        }
+        // Filter files to only those with attributions from the specified prompts
+        diff_json.files.retain(|_file_path, file_diff| {
+            // Check if any annotation key matches a prompt_id
+            file_diff
+                .annotations
+                .keys()
+                .any(|key| prompt_id_set.contains(key))
+        });
+    }
 
     // Filter prompts to only those specified (if any)
     if let Some(ref prompt_ids) = options.prompt_ids {
         let prompt_id_set: std::collections::HashSet<&String> = prompt_ids.iter().collect();
-        diff_json.prompts.retain(|key, _| prompt_id_set.contains(key));
+        diff_json
+            .prompts
+            .retain(|key, _| prompt_id_set.contains(key));
     }
 
     Ok(diff_json)

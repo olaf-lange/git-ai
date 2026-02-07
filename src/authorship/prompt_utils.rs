@@ -2,8 +2,7 @@ use crate::authorship::authorship_log::PromptRecord;
 use crate::authorship::internal_db::InternalDatabase;
 use crate::authorship::transcript::AiTranscript;
 use crate::commands::checkpoint_agent::agent_presets::{
-    ClaudePreset, ContinueCliPreset, CursorPreset, DroidPreset, GeminiPreset,
-    GithubCopilotPreset,
+    ClaudePreset, ContinueCliPreset, CursorPreset, DroidPreset, GeminiPreset, GithubCopilotPreset,
 };
 use crate::commands::checkpoint_agent::opencode_preset::OpenCodePreset;
 use crate::error::GitAiError;
@@ -86,12 +85,13 @@ pub fn find_prompt_in_history(
     let mut found_count = 0;
     for sha in &shas {
         if let Some(authorship_log) = get_authorship(repo, sha)
-            && let Some(prompt) = authorship_log.metadata.prompts.get(prompt_id) {
-                if found_count == offset {
-                    return Ok((sha.clone(), prompt.clone()));
-                }
-                found_count += 1;
+            && let Some(prompt) = authorship_log.metadata.prompts.get(prompt_id)
+        {
+            if found_count == offset {
+                return Ok((sha.clone(), prompt.clone()));
             }
+            found_count += 1;
+        }
     }
 
     // If we get here, we didn't find enough occurrences
@@ -152,8 +152,8 @@ pub fn find_prompt_with_db_fallback(
 /// Result of attempting to update a prompt from a tool
 pub enum PromptUpdateResult {
     Updated(AiTranscript, String), // (new_transcript, new_model)
-    Unchanged,                      // No update available or needed
-    Failed(GitAiError),             // Error occurred but not fatal
+    Unchanged,                     // No update available or needed
+    Failed(GitAiError),            // Error occurred but not fatal
 }
 
 /// Update a prompt by fetching latest transcript from the tool
@@ -479,12 +479,10 @@ fn update_opencode_prompt(
     };
 
     match result {
-        Ok((transcript, model)) => {
-            PromptUpdateResult::Updated(
-                transcript,
-                model.unwrap_or_else(|| current_model.to_string()),
-            )
-        }
+        Ok((transcript, model)) => PromptUpdateResult::Updated(
+            transcript,
+            model.unwrap_or_else(|| current_model.to_string()),
+        ),
         Err(e) => {
             debug_log(&format!(
                 "Failed to fetch OpenCode transcript for session {}: {}",

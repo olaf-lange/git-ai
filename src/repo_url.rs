@@ -9,9 +9,10 @@ pub fn normalize_repo_url(url_str: &str) -> Result<String, String> {
     // Handle SSH scp-like format: user@host:path
     if !url_str.contains("://")
         && let Some((user_host, path)) = url_str.split_once(':')
-            && let Some((_, host)) = user_host.rsplit_once('@') {
-                return normalize_ssh_url(host, path);
-            }
+        && let Some((_, host)) = user_host.rsplit_once('@')
+    {
+        return normalize_ssh_url(host, path);
+    }
 
     // Parse as URL
     let url = Url::parse(url_str).map_err(|e| format!("Invalid URL: {}", e))?;
@@ -26,10 +27,7 @@ pub fn normalize_repo_url(url_str: &str) -> Result<String, String> {
     let host = url.host_str().ok_or("URL must have a host")?;
 
     // Normalize path: remove .git suffix and trailing slash
-    let path = url
-        .path()
-        .trim_end_matches('/')
-        .trim_end_matches(".git");
+    let path = url.path().trim_end_matches('/').trim_end_matches(".git");
 
     // Build canonical HTTPS URL
     let canonical = format!("https://{}{}", host, path);

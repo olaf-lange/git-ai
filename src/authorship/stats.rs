@@ -25,8 +25,7 @@ pub struct ToolModelHeadlineStats {
     pub time_waiting_for_ai: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CommitStats {
     #[serde(default)]
     pub human_additions: u32, // Number of lines committed with human attribution (full and/or mixed)
@@ -49,7 +48,6 @@ pub struct CommitStats {
     #[serde(default)]
     pub tool_model_breakdown: BTreeMap<String, ToolModelHeadlineStats>,
 }
-
 
 pub fn stats_command(
     repo: &Repository,
@@ -436,12 +434,12 @@ pub fn write_stats_to_markdown(stats: &CommitStats) -> String {
             .tool_model_breakdown
             .iter()
             .max_by_key(|(_, stats)| stats.ai_accepted)
-        {
-            output.push_str(&format!(
-                "- Top model: {} ({} accepted lines, {} generated lines)\n",
-                model_name, model_stats.ai_accepted, model_stats.total_ai_additions
-            ));
-        }
+    {
+        output.push_str(&format!(
+            "- Top model: {} ({} accepted lines, {} generated lines)\n",
+            model_name, model_stats.ai_accepted, model_stats.total_ai_additions
+        ));
+    }
 
     output.push_str("\n</details>");
 
@@ -506,7 +504,10 @@ pub fn stats_from_authorship_log(
 
     // Update tool-level accepted counts using diff-based attribution.
     for (tool_model, accepted) in ai_accepted_by_tool {
-        let tool_stats = commit_stats.tool_model_breakdown.entry(tool_model.clone()).or_default();
+        let tool_stats = commit_stats
+            .tool_model_breakdown
+            .entry(tool_model.clone())
+            .or_default();
         tool_stats.ai_accepted = *accepted;
     }
 
@@ -547,8 +548,13 @@ pub fn stats_for_commit_stats(
         commit_obj.parent(0)?.id()
     };
 
-    let diff_ai_stats =
-        diff_ai_accepted_stats(repo, &parent_sha, commit_sha, Some(&parent_sha), ignore_patterns)?;
+    let diff_ai_stats = diff_ai_accepted_stats(
+        repo,
+        &parent_sha,
+        commit_sha,
+        Some(&parent_sha),
+        ignore_patterns,
+    )?;
 
     // Step 3: get the authorship log for this commit
     let authorship_log = get_authorship(repo, commit_sha);
@@ -609,9 +615,10 @@ pub fn get_git_diff_stats(
 
             // Parse deleted lines (handle "-" for binary files)
             if parts[1] != "-"
-                && let Ok(deleted) = parts[1].parse::<u32>() {
-                    deleted_lines += deleted;
-                }
+                && let Ok(deleted) = parts[1].parse::<u32>()
+            {
+                deleted_lines += deleted;
+            }
         }
     }
 

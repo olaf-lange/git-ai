@@ -1,10 +1,11 @@
 use crate::error::GitAiError;
-use crate::mdm::hook_installer::{HookCheckResult, HookInstaller, HookInstallerParams, InstallResult, UninstallResult};
+use crate::mdm::hook_installer::{
+    HookCheckResult, HookInstaller, HookInstallerParams, InstallResult, UninstallResult,
+};
 use crate::mdm::utils::{
-    binary_exists, get_binary_version, home_dir, install_vsc_editor_extension,
+    MIN_CODE_VERSION, binary_exists, get_binary_version, home_dir, install_vsc_editor_extension,
     is_github_codespaces, is_vsc_editor_extension_installed, parse_version,
     settings_paths_for_products, should_process_settings_target, version_meets_requirement,
-    MIN_CODE_VERSION,
 };
 use crate::utils::debug_log;
 use std::path::PathBuf;
@@ -44,13 +45,14 @@ impl HookInstaller for VSCodeInstaller {
         // If we have the binary, check version
         if has_binary
             && let Ok(version_str) = get_binary_version("code")
-                && let Some(version) = parse_version(&version_str)
-                    && !version_meets_requirement(version, MIN_CODE_VERSION) {
-                        return Err(GitAiError::Generic(format!(
-                            "VS Code version {}.{} detected, but minimum version {}.{} is required",
-                            version.0, version.1, MIN_CODE_VERSION.0, MIN_CODE_VERSION.1
-                        )));
-                    }
+            && let Some(version) = parse_version(&version_str)
+            && !version_meets_requirement(version, MIN_CODE_VERSION)
+        {
+            return Err(GitAiError::Generic(format!(
+                "VS Code version {}.{} detected, but minimum version {}.{} is required",
+                version.0, version.1, MIN_CODE_VERSION.0, MIN_CODE_VERSION.1
+            )));
+        }
 
         // VS Code hooks are installed via extension, not config files
         // Check if extension is installed
@@ -190,14 +192,20 @@ impl HookInstaller for VSCodeInstaller {
                         results.push(InstallResult {
                             changed: true,
                             diff: Some(diff),
-                            message: format!("VS Code: git.path updated in {}", settings_path.display()),
+                            message: format!(
+                                "VS Code: git.path updated in {}",
+                                settings_path.display()
+                            ),
                         });
                     }
                     Ok(None) => {
                         results.push(InstallResult {
                             changed: false,
                             diff: None,
-                            message: format!("VS Code: git.path already configured in {}", settings_path.display()),
+                            message: format!(
+                                "VS Code: git.path already configured in {}",
+                                settings_path.display()
+                            ),
                         });
                     }
                     Err(e) => {
@@ -223,7 +231,8 @@ impl HookInstaller for VSCodeInstaller {
         Ok(vec![UninstallResult {
             changed: false,
             diff: None,
-            message: "VS Code: Extension must be uninstalled manually through the editor".to_string(),
+            message: "VS Code: Extension must be uninstalled manually through the editor"
+                .to_string(),
         }])
     }
 }

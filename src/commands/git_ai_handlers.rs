@@ -512,150 +512,150 @@ fn handle_checkpoint(args: &[String]) {
         });
 
         if let Some(files) = files_to_check
-            && !files.is_empty() {
-                // Convert relative paths to absolute paths based on workspace root
-                let absolute_files: Vec<String> = files
-                    .iter()
-                    .map(|f| {
-                        let path = std::path::Path::new(f);
-                        if path.is_absolute() {
-                            f.clone()
-                        } else {
-                            std::path::Path::new(&repository_working_dir)
-                                .join(f)
-                                .to_string_lossy()
-                                .to_string()
-                        }
-                    })
-                    .collect();
+            && !files.is_empty()
+        {
+            // Convert relative paths to absolute paths based on workspace root
+            let absolute_files: Vec<String> = files
+                .iter()
+                .map(|f| {
+                    let path = std::path::Path::new(f);
+                    if path.is_absolute() {
+                        f.clone()
+                    } else {
+                        std::path::Path::new(&repository_working_dir)
+                            .join(f)
+                            .to_string_lossy()
+                            .to_string()
+                    }
+                })
+                .collect();
 
-                // Group files by their containing repository
-                let (repo_files, orphan_files) =
-                    group_files_by_repository(&absolute_files, Some(&repository_working_dir));
+            // Group files by their containing repository
+            let (repo_files, orphan_files) =
+                group_files_by_repository(&absolute_files, Some(&repository_working_dir));
 
-                if repo_files.is_empty() {
-                    eprintln!(
-                        "Failed to find any git repositories for the edited files. Orphaned files: {:?}",
-                        orphan_files
-                    );
-                    std::process::exit(0);
-                }
+            if repo_files.is_empty() {
+                eprintln!(
+                    "Failed to find any git repositories for the edited files. Orphaned files: {:?}",
+                    orphan_files
+                );
+                std::process::exit(0);
+            }
 
-                // Log orphan files if any
-                if !orphan_files.is_empty() {
-                    eprintln!(
-                        "Warning: {} file(s) are not in any git repository and will be skipped: {:?}",
-                        orphan_files.len(),
-                        orphan_files
-                    );
-                }
+            // Log orphan files if any
+            if !orphan_files.is_empty() {
+                eprintln!(
+                    "Warning: {} file(s) are not in any git repository and will be skipped: {:?}",
+                    orphan_files.len(),
+                    orphan_files
+                );
+            }
 
-                // Determine if this is truly a multi-repo workspace or just a single nested repo
-                let is_multi_repo = repo_files.len() > 1;
+            // Determine if this is truly a multi-repo workspace or just a single nested repo
+            let is_multi_repo = repo_files.len() > 1;
 
-                if is_multi_repo {
-                    eprintln!(
-                        "Multi-repo workspace detected. Found {} repositories with edits.",
-                        repo_files.len()
-                    );
-                } else {
-                    eprintln!(
-                        "Workspace root is not a git repository. Detected repository from edited files."
-                    );
-                }
+            if is_multi_repo {
+                eprintln!(
+                    "Multi-repo workspace detected. Found {} repositories with edits.",
+                    repo_files.len()
+                );
+            } else {
+                eprintln!(
+                    "Workspace root is not a git repository. Detected repository from edited files."
+                );
+            }
 
-                let checkpoint_kind = agent_run_result
-                    .as_ref()
-                    .map(|r| r.checkpoint_kind)
-                    .unwrap_or(CheckpointKind::Human);
+            let checkpoint_kind = agent_run_result
+                .as_ref()
+                .map(|r| r.checkpoint_kind)
+                .unwrap_or(CheckpointKind::Human);
 
-                let checkpoint_start = std::time::Instant::now();
-                let mut total_files_edited = 0;
-                let mut repos_processed = 0;
-                let total_repos = repo_files.len();
+            let checkpoint_start = std::time::Instant::now();
+            let mut total_files_edited = 0;
+            let mut repos_processed = 0;
+            let total_repos = repo_files.len();
 
-                // Process each repository separately
-                for (repo_workdir, (repo, repo_file_paths)) in repo_files {
-                    repos_processed += 1;
-                    eprintln!(
-                        "Processing repository {}/{}: {}",
-                        repos_processed,
-                        total_repos,
-                        repo_workdir.display()
-                    );
+            // Process each repository separately
+            for (repo_workdir, (repo, repo_file_paths)) in repo_files {
+                repos_processed += 1;
+                eprintln!(
+                    "Processing repository {}/{}: {}",
+                    repos_processed,
+                    total_repos,
+                    repo_workdir.display()
+                );
 
-                    // Get user name from this repo's config
-                    let default_user_name = match repo.config_get_str("user.name") {
-                        Ok(Some(name)) if !name.trim().is_empty() => name,
-                        _ => {
-                            eprintln!(
-                                "Warning: git user.name not configured for {}. Using 'unknown'.",
-                                repo_workdir.display()
-                            );
-                            "unknown".to_string()
-                        }
-                    };
+                // Get user name from this repo's config
+                let default_user_name = match repo.config_get_str("user.name") {
+                    Ok(Some(name)) if !name.trim().is_empty() => name,
+                    _ => {
+                        eprintln!(
+                            "Warning: git user.name not configured for {}. Using 'unknown'.",
+                            repo_workdir.display()
+                        );
+                        "unknown".to_string()
+                    }
+                };
 
-                    // Create a modified agent_run_result with only this repo's files
-                    let repo_agent_result = agent_run_result.as_ref().map(|r| {
-                        let mut modified = r.clone();
-                        modified.repo_working_dir =
-                            Some(repo_workdir.to_string_lossy().to_string());
-                        if r.checkpoint_kind == CheckpointKind::Human {
-                            modified.will_edit_filepaths = Some(repo_file_paths.clone());
-                            modified.edited_filepaths = None;
-                        } else {
-                            modified.edited_filepaths = Some(repo_file_paths.clone());
-                            modified.will_edit_filepaths = None;
-                        }
-                        modified
-                    });
+                // Create a modified agent_run_result with only this repo's files
+                let repo_agent_result = agent_run_result.as_ref().map(|r| {
+                    let mut modified = r.clone();
+                    modified.repo_working_dir = Some(repo_workdir.to_string_lossy().to_string());
+                    if r.checkpoint_kind == CheckpointKind::Human {
+                        modified.will_edit_filepaths = Some(repo_file_paths.clone());
+                        modified.edited_filepaths = None;
+                    } else {
+                        modified.edited_filepaths = Some(repo_file_paths.clone());
+                        modified.will_edit_filepaths = None;
+                    }
+                    modified
+                });
 
-                    let checkpoint_result = commands::checkpoint::run(
-                        &repo,
-                        &default_user_name,
-                        checkpoint_kind,
-                        show_working_log,
-                        reset,
-                        false,
-                        repo_agent_result,
-                        false,
-                    );
+                let checkpoint_result = commands::checkpoint::run(
+                    &repo,
+                    &default_user_name,
+                    checkpoint_kind,
+                    show_working_log,
+                    reset,
+                    false,
+                    repo_agent_result,
+                    false,
+                );
 
-                    match checkpoint_result {
-                        Ok((_, files_edited, _)) => {
-                            total_files_edited += files_edited;
-                            eprintln!(
-                                "  Checkpoint for {} completed ({} files)",
-                                repo_workdir.display(),
-                                files_edited
-                            );
-                        }
-                        Err(e) => {
-                            eprintln!("  Checkpoint for {} failed: {}", repo_workdir.display(), e);
-                            let context = serde_json::json!({
-                                "function": "checkpoint",
-                                "repo": repo_workdir.to_string_lossy(),
-                                "checkpoint_kind": format!("{:?}", checkpoint_kind)
-                            });
-                            observability::log_error(&e, Some(context));
-                            // Continue processing other repos instead of exiting
-                        }
+                match checkpoint_result {
+                    Ok((_, files_edited, _)) => {
+                        total_files_edited += files_edited;
+                        eprintln!(
+                            "  Checkpoint for {} completed ({} files)",
+                            repo_workdir.display(),
+                            files_edited
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("  Checkpoint for {} failed: {}", repo_workdir.display(), e);
+                        let context = serde_json::json!({
+                            "function": "checkpoint",
+                            "repo": repo_workdir.to_string_lossy(),
+                            "checkpoint_kind": format!("{:?}", checkpoint_kind)
+                        });
+                        observability::log_error(&e, Some(context));
+                        // Continue processing other repos instead of exiting
                     }
                 }
-
-                let elapsed = checkpoint_start.elapsed();
-                log_performance_for_checkpoint(total_files_edited, elapsed, checkpoint_kind);
-                if is_multi_repo {
-                    eprintln!(
-                        "Checkpoint completed in {:?} ({} repositories, {} total files)",
-                        elapsed, repos_processed, total_files_edited
-                    );
-                } else {
-                    eprintln!("Checkpoint completed in {:?}", elapsed);
-                }
-                return;
             }
+
+            let elapsed = checkpoint_start.elapsed();
+            log_performance_for_checkpoint(total_files_edited, elapsed, checkpoint_kind);
+            if is_multi_repo {
+                eprintln!(
+                    "Checkpoint completed in {:?} ({} repositories, {} total files)",
+                    elapsed, repos_processed, total_files_edited
+                );
+            } else {
+                eprintln!("Checkpoint completed in {:?}", elapsed);
+            }
+            return;
+        }
 
         // No files to check, fall through to error
         eprintln!(
@@ -796,28 +796,30 @@ fn handle_ai_blame(args: &[String]) {
     {
         // First, check git config for blame.ignoreRevsFile
         if let Ok(Some(config_path)) = repo.config_get_str("blame.ignoreRevsFile")
-            && !config_path.is_empty() {
-                // Config path could be relative to repo root or absolute
-                if let Ok(workdir) = repo.workdir() {
-                    let full_path = if std::path::Path::new(&config_path).is_absolute() {
-                        std::path::PathBuf::from(&config_path)
-                    } else {
-                        workdir.join(&config_path)
-                    };
-                    if full_path.exists() {
-                        options.ignore_revs_file = Some(full_path.to_string_lossy().to_string());
-                    }
+            && !config_path.is_empty()
+        {
+            // Config path could be relative to repo root or absolute
+            if let Ok(workdir) = repo.workdir() {
+                let full_path = if std::path::Path::new(&config_path).is_absolute() {
+                    std::path::PathBuf::from(&config_path)
+                } else {
+                    workdir.join(&config_path)
+                };
+                if full_path.exists() {
+                    options.ignore_revs_file = Some(full_path.to_string_lossy().to_string());
                 }
             }
+        }
 
         // If still not set, check for .git-blame-ignore-revs in the repository root
         if options.ignore_revs_file.is_none()
-            && let Ok(workdir) = repo.workdir() {
-                let ignore_revs_path = workdir.join(".git-blame-ignore-revs");
-                if ignore_revs_path.exists() {
-                    options.ignore_revs_file = Some(ignore_revs_path.to_string_lossy().to_string());
-                }
+            && let Ok(workdir) = repo.workdir()
+        {
+            let ignore_revs_path = workdir.join(".git-blame-ignore-revs");
+            if ignore_revs_path.exists() {
+                options.ignore_revs_file = Some(ignore_revs_path.to_string_lossy().to_string());
             }
+        }
     }
 
     // Check if this is an interactive terminal

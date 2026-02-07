@@ -160,7 +160,15 @@ pub fn post_commit(
     let stats = stats_for_commit_stats(repo, &commit_sha, &[])?;
 
     // Record metrics for this commit
-    record_commit_metrics(repo, &commit_sha, &parent_sha, &human_author, &authorship_log, &stats, &parent_working_log);
+    record_commit_metrics(
+        repo,
+        &commit_sha,
+        &parent_sha,
+        &human_author,
+        &authorship_log,
+        &stats,
+        &parent_working_log,
+    );
 
     // Write INITIAL file for uncommitted AI attributions (if any)
     if !initial_attributions.files.is_empty() {
@@ -193,10 +201,7 @@ fn update_prompts_to_latest(checkpoints: &mut [Checkpoint]) -> Result<(), GitAiE
     for (idx, checkpoint) in checkpoints.iter().enumerate() {
         if let Some(agent_id) = &checkpoint.agent_id {
             let key = format!("{}:{}", agent_id.tool, agent_id.id);
-            agent_checkpoint_indices
-                .entry(key)
-                .or_default()
-                .push(idx);
+            agent_checkpoint_indices.entry(key).or_default().push(idx);
         }
     }
 
@@ -336,9 +341,10 @@ fn enqueue_prompt_messages_to_cas(
         });
 
     if let Some(url) = repo_url
-        && let Ok(normalized) = crate::repo_url::normalize_repo_url(&url) {
-            metadata.insert("repo_url".to_string(), normalized);
-        }
+        && let Ok(normalized) = crate::repo_url::normalize_repo_url(&url)
+    {
+        metadata.insert("repo_url".to_string(), normalized);
+    }
 
     // Get API base URL for constructing messages_url
     let api_base_url = Config::get().api_base_url();
@@ -375,7 +381,7 @@ fn record_commit_metrics(
     stats: &crate::authorship::stats::CommitStats,
     checkpoints: &[Checkpoint],
 ) {
-    use crate::metrics::{record, CommittedValues, EventAttributes};
+    use crate::metrics::{CommittedValues, EventAttributes, record};
 
     // Build parallel arrays: index 0 = "all" (aggregate), index 1+ = per tool/model
     let mut tool_model_pairs: Vec<String> = vec!["all".to_string()];
@@ -434,23 +440,26 @@ fn record_commit_metrics(
     // Build attributes - start with version
     let mut attrs = EventAttributes::with_version(env!("CARGO_PKG_VERSION"));
 
-    attrs = attrs.author(human_author)
+    attrs = attrs
+        .author(human_author)
         .commit_sha(commit_sha)
         .base_commit_sha(parent_sha);
 
     // Get repo URL from default remote
     if let Ok(Some(remote_name)) = repo.get_default_remote()
         && let Ok(remotes) = repo.remotes_with_urls()
-            && let Some((_, url)) = remotes.into_iter().find(|(n, _)| n == &remote_name)
-                && let Ok(normalized) = crate::repo_url::normalize_repo_url(&url) {
-                    attrs = attrs.repo_url(normalized);
-                }
+        && let Some((_, url)) = remotes.into_iter().find(|(n, _)| n == &remote_name)
+        && let Ok(normalized) = crate::repo_url::normalize_repo_url(&url)
+    {
+        attrs = attrs.repo_url(normalized);
+    }
 
     // Get current branch
     if let Ok(head_ref) = repo.head()
-        && let Ok(short_branch) = head_ref.shorthand() {
-            attrs = attrs.branch(short_branch);
-        }
+        && let Ok(short_branch) = head_ref.shorthand()
+    {
+        attrs = attrs.branch(short_branch);
+    }
 
     // Record the metric
     record(values, attrs);
@@ -529,21 +538,30 @@ mod tests {
 
         // Create initial file and commit
         tmp_repo.write_file("README.md", "# Test\n", true).unwrap();
-        tmp_repo.trigger_checkpoint_with_author("test_user").unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
         tmp_repo.commit_with_message("Initial commit").unwrap();
 
         // Create a file with Chinese characters in the filename
         let chinese_filename = "中文文件.txt";
-        tmp_repo.write_file(chinese_filename, "Hello, 世界!\n", true).unwrap();
+        tmp_repo
+            .write_file(chinese_filename, "Hello, 世界!\n", true)
+            .unwrap();
 
         // Trigger AI checkpoint
-        tmp_repo.trigger_checkpoint_with_ai("mock_ai", None, None).unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_ai("mock_ai", None, None)
+            .unwrap();
 
         // Commit
         let authorship_log = tmp_repo.commit_with_message("Add Chinese file").unwrap();
 
         // Debug output
-        println!("Authorship log attestations: {:?}", authorship_log.attestations);
+        println!(
+            "Authorship log attestations: {:?}",
+            authorship_log.attestations
+        );
 
         // The attestation should include the Chinese filename
         assert_eq!(
@@ -552,8 +570,7 @@ mod tests {
             "Should have 1 attestation for the Chinese-named file"
         );
         assert_eq!(
-            authorship_log.attestations[0].file_path,
-            chinese_filename,
+            authorship_log.attestations[0].file_path, chinese_filename,
             "File path should be the UTF-8 filename"
         );
     }

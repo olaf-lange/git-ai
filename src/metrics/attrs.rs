@@ -1,8 +1,6 @@
 //! Common attributes shared across all metric events.
 
-use super::pos_encoded::{
-    sparse_set, string_to_json, sparse_get_string, PosEncoded, PosField,
-};
+use super::pos_encoded::{PosEncoded, PosField, sparse_get_string, sparse_set, string_to_json};
 use super::types::SparseArray;
 
 /// Attribute positions (shared across all events).
@@ -186,16 +184,36 @@ impl EventAttributes {
 impl PosEncoded for EventAttributes {
     fn to_sparse(&self) -> SparseArray {
         let mut map = SparseArray::new();
-        sparse_set(&mut map, attr_pos::GIT_AI_VERSION, string_to_json(&self.git_ai_version));
+        sparse_set(
+            &mut map,
+            attr_pos::GIT_AI_VERSION,
+            string_to_json(&self.git_ai_version),
+        );
         sparse_set(&mut map, attr_pos::REPO_URL, string_to_json(&self.repo_url));
         sparse_set(&mut map, attr_pos::AUTHOR, string_to_json(&self.author));
-        sparse_set(&mut map, attr_pos::COMMIT_SHA, string_to_json(&self.commit_sha));
-        sparse_set(&mut map, attr_pos::BASE_COMMIT_SHA, string_to_json(&self.base_commit_sha));
+        sparse_set(
+            &mut map,
+            attr_pos::COMMIT_SHA,
+            string_to_json(&self.commit_sha),
+        );
+        sparse_set(
+            &mut map,
+            attr_pos::BASE_COMMIT_SHA,
+            string_to_json(&self.base_commit_sha),
+        );
         sparse_set(&mut map, attr_pos::BRANCH, string_to_json(&self.branch));
         sparse_set(&mut map, attr_pos::TOOL, string_to_json(&self.tool));
         sparse_set(&mut map, attr_pos::MODEL, string_to_json(&self.model));
-        sparse_set(&mut map, attr_pos::PROMPT_ID, string_to_json(&self.prompt_id));
-        sparse_set(&mut map, attr_pos::EXTERNAL_PROMPT_ID, string_to_json(&self.external_prompt_id));
+        sparse_set(
+            &mut map,
+            attr_pos::PROMPT_ID,
+            string_to_json(&self.prompt_id),
+        );
+        sparse_set(
+            &mut map,
+            attr_pos::EXTERNAL_PROMPT_ID,
+            string_to_json(&self.external_prompt_id),
+        );
         map
     }
 
@@ -233,10 +251,16 @@ mod tests {
             .prompt_id("prompt-123");
 
         assert_eq!(attrs.git_ai_version, Some(Some("1.0.0".to_string())));
-        assert_eq!(attrs.repo_url, Some(Some("https://github.com/user/repo".to_string())));
+        assert_eq!(
+            attrs.repo_url,
+            Some(Some("https://github.com/user/repo".to_string()))
+        );
         assert_eq!(attrs.author, Some(Some("user@example.com".to_string())));
         assert_eq!(attrs.commit_sha, Some(Some("commit-123".to_string())));
-        assert_eq!(attrs.base_commit_sha, Some(Some("base-commit-123".to_string())));
+        assert_eq!(
+            attrs.base_commit_sha,
+            Some(Some("base-commit-123".to_string()))
+        );
         assert_eq!(attrs.branch, Some(Some("main".to_string())));
         assert_eq!(attrs.tool, Some(Some("claude-code".to_string())));
         assert_eq!(attrs.model, Some(None)); // explicitly null
@@ -258,9 +282,15 @@ mod tests {
         assert_eq!(sparse.get("3"), None); // not set
         assert_eq!(sparse.get("4"), None); // not set
         assert_eq!(sparse.get("5"), None); // not set
-        assert_eq!(sparse.get("20"), Some(&Value::String("test-tool".to_string())));
+        assert_eq!(
+            sparse.get("20"),
+            Some(&Value::String("test-tool".to_string()))
+        );
         assert_eq!(sparse.get("21"), Some(&Value::Null)); // explicitly null
-        assert_eq!(sparse.get("22"), Some(&Value::String("prompt-123".to_string())));
+        assert_eq!(
+            sparse.get("22"),
+            Some(&Value::String("prompt-123".to_string()))
+        );
     }
 
     #[test]

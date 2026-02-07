@@ -302,10 +302,7 @@ fn show_all_config() -> Result<(), String> {
         );
     }
 
-    effective_config.insert(
-        "quiet".to_string(),
-        Value::Bool(runtime_config.is_quiet()),
-    );
+    effective_config.insert("quiet".to_string(), Value::Bool(runtime_config.is_quiet()));
 
     // Feature flags - show effective flags with defaults applied
     let flags_value = serde_json::to_value(runtime_config.get_feature_flags())
@@ -490,7 +487,9 @@ fn set_config_value(key: &str, value: &str, add_mode: bool) -> Result<(), String
             "update_channel" => {
                 // Validate update channel
                 if value != "latest" && value != "next" {
-                    return Err("Invalid update_channel value. Expected 'latest' or 'next'".to_string());
+                    return Err(
+                        "Invalid update_channel value. Expected 'latest' or 'next'".to_string()
+                    );
                 }
                 file_config.update_channel = Some(value.to_string());
                 crate::config::save_file_config(&file_config)?;

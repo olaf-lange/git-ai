@@ -304,9 +304,8 @@ fn test_tool_results_are_not_parsed_as_user_messages() {
     temp_file.write_all(jsonl_content.as_bytes()).unwrap();
     let temp_path = temp_file.path().to_str().unwrap();
 
-    let (transcript, _model) =
-        ClaudePreset::transcript_and_model_from_claude_code_jsonl(temp_path)
-            .expect("Failed to parse JSONL");
+    let (transcript, _model) = ClaudePreset::transcript_and_model_from_claude_code_jsonl(temp_path)
+        .expect("Failed to parse JSONL");
 
     // Should only have 1 message (the assistant response)
     // The tool_result should be skipped entirely
@@ -342,9 +341,8 @@ fn test_user_text_content_blocks_are_parsed_correctly() {
     temp_file.write_all(jsonl_content.as_bytes()).unwrap();
     let temp_path = temp_file.path().to_str().unwrap();
 
-    let (transcript, _model) =
-        ClaudePreset::transcript_and_model_from_claude_code_jsonl(temp_path)
-            .expect("Failed to parse JSONL");
+    let (transcript, _model) = ClaudePreset::transcript_and_model_from_claude_code_jsonl(temp_path)
+        .expect("Failed to parse JSONL");
 
     // Should have 2 messages (user + assistant)
     assert_eq!(

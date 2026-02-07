@@ -74,9 +74,10 @@ impl HookInstaller for OpenCodeInstaller {
 
         // Ensure directory exists
         if let Some(dir) = plugin_path.parent()
-            && !dry_run {
-                fs::create_dir_all(dir)?;
-            }
+            && !dry_run
+        {
+            fs::create_dir_all(dir)?;
+        }
 
         // Read existing content if present
         let existing_content = if plugin_path.exists() {

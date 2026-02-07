@@ -1151,8 +1151,16 @@ fn test_multi_file_batch_commits_preserve_attribution() {
     let file_a_path = repo.path().join("file_a.txt");
     let file_b_path = repo.path().join("file_b.txt");
 
-    fs::write(&file_a_path, "AI content for file A\nLine 2 from AI\nLine 3 from AI\n").unwrap();
-    fs::write(&file_b_path, "AI content for file B\nLine 2 from AI\nLine 3 from AI\n").unwrap();
+    fs::write(
+        &file_a_path,
+        "AI content for file A\nLine 2 from AI\nLine 3 from AI\n",
+    )
+    .unwrap();
+    fs::write(
+        &file_b_path,
+        "AI content for file B\nLine 2 from AI\nLine 3 from AI\n",
+    )
+    .unwrap();
 
     // Single AI checkpoint covers both files (same AI session)
     repo.git_ai(&["checkpoint", "mock_ai"]).unwrap();
@@ -1198,7 +1206,8 @@ fn test_multi_file_batch_commits_modifications() {
     fs::write(&file_b_path, "Original content B\n").unwrap();
 
     repo.git_ai(&["checkpoint"]).unwrap();
-    repo.stage_all_and_commit("Initial commit with both files").unwrap();
+    repo.stage_all_and_commit("Initial commit with both files")
+        .unwrap();
 
     // AI modifies both files in the same session
     fs::write(&file_a_path, "Original content A\nAI added line A\n").unwrap();
@@ -1217,10 +1226,7 @@ fn test_multi_file_batch_commits_modifications() {
 
     // Verify both files have correct AI attribution
     let mut file_a = repo.filename("file_a.txt");
-    file_a.assert_lines_and_blame(lines![
-        "Original content A".human(),
-        "AI added line A".ai(),
-    ]);
+    file_a.assert_lines_and_blame(lines!["Original content A".human(), "AI added line A".ai(),]);
 
     let mut file_b = repo.filename("file_b.txt");
     file_b.assert_lines_and_blame(lines![
@@ -1246,11 +1252,7 @@ fn test_ai_edits_file_with_spaces_in_filename() {
         .unwrap();
 
     // AI adds new lines to the file
-    fs::write(
-        &file_path,
-        "Line 1\nLine 2\nAI Line 1\nAI Line 2\nLine 3\n",
-    )
-    .unwrap();
+    fs::write(&file_path, "Line 1\nLine 2\nAI Line 1\nAI Line 2\nLine 3\n").unwrap();
 
     // Mark the AI-authored content with mock_ai checkpoint
     repo.git_ai(&["checkpoint", "mock_ai", "my test file.txt"])

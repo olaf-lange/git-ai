@@ -54,16 +54,18 @@ fn build_checkpoint_attrs(
     // Add repo URL
     if let Ok(Some(remote_name)) = repo.get_default_remote()
         && let Ok(remotes) = repo.remotes_with_urls()
-            && let Some((_, url)) = remotes.into_iter().find(|(n, _)| n == &remote_name)
-                && let Ok(normalized) = crate::repo_url::normalize_repo_url(&url) {
-                    attrs = attrs.repo_url(normalized);
-                }
+        && let Some((_, url)) = remotes.into_iter().find(|(n, _)| n == &remote_name)
+        && let Ok(normalized) = crate::repo_url::normalize_repo_url(&url)
+    {
+        attrs = attrs.repo_url(normalized);
+    }
 
     // Add branch
     if let Ok(head_ref) = repo.head()
-        && let Ok(short_branch) = head_ref.shorthand() {
-            attrs = attrs.branch(short_branch);
-        }
+        && let Ok(short_branch) = head_ref.shorthand()
+    {
+        attrs = attrs.branch(short_branch);
+    }
 
     attrs
 }
@@ -264,20 +266,19 @@ pub fn run(
                 // Display first user message from transcript if available
                 if let Some(transcript) = &checkpoint.transcript
                     && let Some(first_message) = transcript.messages().first()
-                        && let crate::authorship::transcript::Message::User { text, .. } =
-                            first_message
-                        {
-                            let agent_info = checkpoint
-                                .agent_id
-                                .as_ref()
-                                .map(|id| format!(" (Agent: {})", id.tool))
-                                .unwrap_or_default();
-                            let message_count = transcript.messages().len();
-                            debug_log(&format!(
-                                "  First message{} ({} messages): {}",
-                                agent_info, message_count, text
-                            ));
-                        }
+                    && let crate::authorship::transcript::Message::User { text, .. } = first_message
+                {
+                    let agent_info = checkpoint
+                        .agent_id
+                        .as_ref()
+                        .map(|id| format!(" (Agent: {})", id.tool))
+                        .unwrap_or_default();
+                    let message_count = transcript.messages().len();
+                    debug_log(&format!(
+                        "  First message{} ({} messages): {}",
+                        agent_info, message_count, text
+                    ));
+                }
 
                 debug_log("  Entries:");
                 for entry in &checkpoint.entries {
@@ -368,25 +369,27 @@ pub fn run(
         ));
 
         // Upsert prompt to database (non-fatal if it fails)
-        if kind != CheckpointKind::Human && checkpoint.agent_id.is_some()
+        if kind != CheckpointKind::Human
+            && checkpoint.agent_id.is_some()
             && checkpoint.transcript.is_some()
-                && let Err(e) = upsert_checkpoint_prompt_to_db(
-                    &checkpoint,
-                    working_log.repo_workdir.to_string_lossy().to_string(),
-                    None, // commit_sha is None at checkpoint stage
-                ) {
-                    debug_log(&format!(
-                        "[Warning] Failed to upsert prompt to database: {}",
-                        e
-                    ));
-                    crate::observability::log_error(
-                        &e,
-                        Some(serde_json::json!({
-                            "operation": "checkpoint_prompt_upsert",
-                            "agent_tool": checkpoint.agent_id.as_ref().map(|a| a.tool.as_str())
-                        })),
-                    );
-                }
+            && let Err(e) = upsert_checkpoint_prompt_to_db(
+                &checkpoint,
+                working_log.repo_workdir.to_string_lossy().to_string(),
+                None, // commit_sha is None at checkpoint stage
+            )
+        {
+            debug_log(&format!(
+                "[Warning] Failed to upsert prompt to database: {}",
+                e
+            ));
+            crate::observability::log_error(
+                &e,
+                Some(serde_json::json!({
+                    "operation": "checkpoint_prompt_upsert",
+                    "agent_tool": checkpoint.agent_id.as_ref().map(|a| a.tool.as_str())
+                })),
+            );
+        }
 
         // Append checkpoint to the working log
         let append_start = Instant::now();
@@ -401,11 +404,10 @@ pub fn run(
         let attrs = build_checkpoint_attrs(repo, &base_commit, checkpoint.agent_id.as_ref());
 
         // Record agent usage metric for AI checkpoints
-        if kind != CheckpointKind::Human
-            && checkpoint.agent_id.is_some() {
-                let values = crate::metrics::AgentUsageValues::new();
-                crate::metrics::record(values, attrs.clone());
-            }
+        if kind != CheckpointKind::Human && checkpoint.agent_id.is_some() {
+            let values = crate::metrics::AgentUsageValues::new();
+            crate::metrics::record(values, attrs.clone());
+        }
 
         // Record per-file checkpoint metrics
         // entries and file_stats are parallel arrays (same index = same file)
@@ -840,11 +842,11 @@ fn get_checkpoint_entry_for_file(
         let mut ai_blame_opts = GitAiBlameOptions::default();
         #[allow(clippy::field_reassign_with_default)]
         {
-        ai_blame_opts.no_output = true;
-        ai_blame_opts.return_human_authors_as_human = true;
-        ai_blame_opts.use_prompt_hashes_as_names = true;
-        ai_blame_opts.newest_commit = head_commit_sha.as_ref().clone();
-        ai_blame_opts.oldest_date = Some(*OLDEST_AI_BLAME_DATE);
+            ai_blame_opts.no_output = true;
+            ai_blame_opts.return_human_authors_as_human = true;
+            ai_blame_opts.use_prompt_hashes_as_names = true;
+            ai_blame_opts.newest_commit = head_commit_sha.as_ref().clone();
+            ai_blame_opts.oldest_date = Some(*OLDEST_AI_BLAME_DATE);
         }
         let ai_blame = if feature_flag_inter_commit_move {
             repo.blame(&file_path, &ai_blame_opts).ok()

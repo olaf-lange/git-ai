@@ -4,7 +4,9 @@ mod test_utils;
 
 use git_ai::authorship::transcript::Message;
 use git_ai::authorship::working_log::CheckpointKind;
-use git_ai::commands::checkpoint_agent::agent_presets::{AgentCheckpointFlags, AgentCheckpointPreset};
+use git_ai::commands::checkpoint_agent::agent_presets::{
+    AgentCheckpointFlags, AgentCheckpointPreset,
+};
 use git_ai::commands::checkpoint_agent::opencode_preset::OpenCodePreset;
 use serde_json::json;
 use std::fs;
@@ -30,7 +32,10 @@ fn test_parse_opencode_storage_transcript() {
     );
 
     // Model should be extracted from first assistant message
-    assert!(model.is_some(), "Model should be extracted from assistant message");
+    assert!(
+        model.is_some(),
+        "Model should be extracted from assistant message"
+    );
     assert_eq!(
         model.unwrap(),
         "anthropic/claude-3-5-sonnet-20241022",
@@ -136,7 +141,9 @@ fn test_opencode_preset_pretooluse_returns_human_checkpoint() {
         hook_input: Some(hook_input),
     };
 
-    let result = OpenCodePreset.run(flags).expect("Failed to run OpenCodePreset");
+    let result = OpenCodePreset
+        .run(flags)
+        .expect("Failed to run OpenCodePreset");
 
     // Clean up env var
     unsafe {
@@ -189,7 +196,9 @@ fn test_opencode_preset_posttooluse_returns_ai_checkpoint() {
         hook_input: Some(hook_input),
     };
 
-    let result = OpenCodePreset.run(flags).expect("Failed to run OpenCodePreset");
+    let result = OpenCodePreset
+        .run(flags)
+        .expect("Failed to run OpenCodePreset");
 
     // Clean up env var
     unsafe {
@@ -217,7 +226,10 @@ fn test_opencode_preset_posttooluse_returns_ai_checkpoint() {
 
     assert_eq!(result.agent_id.tool, "opencode");
     assert_eq!(result.agent_id.id, "test-session-123");
-    assert_eq!(result.agent_id.model, "anthropic/claude-3-5-sonnet-20241022");
+    assert_eq!(
+        result.agent_id.model,
+        "anthropic/claude-3-5-sonnet-20241022"
+    );
 }
 
 #[test]
@@ -245,7 +257,9 @@ fn test_opencode_preset_stores_session_id_in_metadata() {
         hook_input: Some(hook_input),
     };
 
-    let result = OpenCodePreset.run(flags).expect("Failed to run OpenCodePreset");
+    let result = OpenCodePreset
+        .run(flags)
+        .expect("Failed to run OpenCodePreset");
 
     unsafe {
         std::env::remove_var("GIT_AI_OPENCODE_STORAGE_PATH");
@@ -285,17 +299,16 @@ fn test_opencode_preset_sets_repo_working_dir() {
         hook_input: Some(hook_input),
     };
 
-    let result = OpenCodePreset.run(flags).expect("Failed to run OpenCodePreset");
+    let result = OpenCodePreset
+        .run(flags)
+        .expect("Failed to run OpenCodePreset");
 
     unsafe {
         std::env::remove_var("GIT_AI_OPENCODE_STORAGE_PATH");
     }
 
     assert!(result.repo_working_dir.is_some());
-    assert_eq!(
-        result.repo_working_dir.unwrap(),
-        "/Users/test/my-project"
-    );
+    assert_eq!(result.repo_working_dir.unwrap(), "/Users/test/my-project");
 }
 
 #[test]
@@ -395,7 +408,10 @@ fn test_opencode_e2e_checkpoint_and_commit() {
 
     // Set up environment for the test
     unsafe {
-        std::env::set_var("GIT_AI_OPENCODE_STORAGE_PATH", storage_path.to_str().unwrap());
+        std::env::set_var(
+            "GIT_AI_OPENCODE_STORAGE_PATH",
+            storage_path.to_str().unwrap(),
+        );
     }
 
     // Create hook input for PreToolUse (human checkpoint)

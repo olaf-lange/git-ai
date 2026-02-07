@@ -228,12 +228,13 @@ fn get_working_dir_diff_stats(
 
     // Add pathspecs if provided to scope the diff to specific files
     if let Some(paths) = pathspecs
-        && !paths.is_empty() {
-            args.push("--".to_string());
-            for path in paths {
-                args.push(path.clone());
-            }
+        && !paths.is_empty()
+    {
+        args.push("--".to_string());
+        for path in paths {
+            args.push(path.clone());
         }
+    }
 
     let output = crate::git::repository::exec_git(&args)?;
     let stdout = String::from_utf8(output.stdout)?;
@@ -257,9 +258,10 @@ fn get_working_dir_diff_stats(
 
             // Parse deleted lines (handle "-" for binary files)
             if parts[1] != "-"
-                && let Ok(deleted) = parts[1].parse::<u32>() {
-                    deleted_lines += deleted;
-                }
+                && let Ok(deleted) = parts[1].parse::<u32>()
+            {
+                deleted_lines += deleted;
+            }
         }
     }
 

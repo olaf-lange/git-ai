@@ -139,8 +139,9 @@ mod tests {
                         .open(&full_path)
                         .unwrap_or_else(|_| panic!("Should be able to open file: {}", file_path));
 
-                    file.write_all(b"\n# Human Line\n")
-                        .unwrap_or_else(|_| panic!("Should be able to write to file: {}", file_path));
+                    file.write_all(b"\n# Human Line\n").unwrap_or_else(|_| {
+                        panic!("Should be able to write to file: {}", file_path)
+                    });
                 }
 
                 // Step 2: Run git-ai checkpoint
@@ -154,8 +155,9 @@ mod tests {
 
                     let new_content = format!("# AI Line\n{}", content);
 
-                    std::fs::write(&full_path, new_content)
-                        .unwrap_or_else(|_| panic!("Should be able to write to file: {}", file_path));
+                    std::fs::write(&full_path, new_content).unwrap_or_else(|_| {
+                        panic!("Should be able to write to file: {}", file_path)
+                    });
                 }
 
                 // Step 4: Run git-ai mock_ai
@@ -561,9 +563,10 @@ pub fn find_random_files_with_options(
             } else if path.is_file() {
                 // Get relative path from repo root
                 if let Ok(relative) = path.strip_prefix(repo_path)
-                    && let Some(rel_str) = relative.to_str() {
-                        all_files.push(rel_str.to_string());
-                    }
+                    && let Some(rel_str) = relative.to_str()
+                {
+                    all_files.push(rel_str.to_string());
+                }
             }
         }
     }
@@ -814,9 +817,10 @@ impl Sampler {
 
                 // 4. Delete the old test branch if it was a test-bench branch
                 if let Some(branch) = current_branch
-                    && branch.starts_with("test-bench/") {
-                        let _ = repo.git_og(&["branch", "-D", &branch]);
-                    }
+                    && branch.starts_with("test-bench/")
+                {
+                    let _ = repo.git_og(&["branch", "-D", &branch]);
+                }
 
                 // 5. Create a new branch with timestamp for isolation
                 let timestamp_nanos = SystemTime::now()

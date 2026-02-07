@@ -457,23 +457,25 @@ impl AttributionTracker {
 
             if covered {
                 if let Some(start) = range_start.take()
-                    && start < idx {
-                        attributions.push(Attribution::new(start, idx, author.to_string(), ts));
-                    }
+                    && start < idx
+                {
+                    attributions.push(Attribution::new(start, idx, author.to_string(), ts));
+                }
             } else if range_start.is_none() {
                 range_start = Some(idx);
             }
         }
 
         if let Some(start) = range_start.take()
-            && start < content.len() {
-                attributions.push(Attribution::new(
-                    start,
-                    content.len(),
-                    author.to_string(),
-                    ts,
-                ));
-            }
+            && start < content.len()
+        {
+            attributions.push(Attribution::new(
+                start,
+                content.len(),
+                author.to_string(),
+                ts,
+            ));
+        }
 
         attributions
     }
@@ -1047,8 +1049,30 @@ fn line_range_to_byte_range(
 fn is_operator_or_delimiter(ch: char) -> bool {
     matches!(
         ch,
-        '+' | '-' | '*' | '/' | '%' | '=' | '<' | '>' | '!' | '&' | '|' | '^' | '~' | '?' | '@'
-            | ';' | ',' | '.' | ':' | '(' | ')' | '{' | '}' | '[' | ']'
+        '+' | '-'
+            | '*'
+            | '/'
+            | '%'
+            | '='
+            | '<'
+            | '>'
+            | '!'
+            | '&'
+            | '|'
+            | '^'
+            | '~'
+            | '?'
+            | '@'
+            | ';'
+            | ','
+            | '.'
+            | ':'
+            | '('
+            | ')'
+            | '{'
+            | '}'
+            | '['
+            | ']'
     )
 }
 
@@ -1169,14 +1193,27 @@ fn tokenize_non_whitespace(
         }
 
         // Numbers (including hex, octal, binary, floats, scientific notation)
-        if ch.is_ascii_digit() || (ch == '.' && i + ch_len < end && content[i + ch_len..].chars().next().is_some_and(|c| c.is_ascii_digit())) {
+        if ch.is_ascii_digit()
+            || (ch == '.'
+                && i + ch_len < end
+                && content[i + ch_len..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_digit()))
+        {
             let mut lexeme = String::new();
             let token_start = i;
 
             // Handle hex (0x), octal (0o), binary (0b) prefixes
             if ch == '0' && i + 1 < end {
                 let next_ch = content[i + 1..].chars().next().unwrap();
-                if next_ch == 'x' || next_ch == 'X' || next_ch == 'o' || next_ch == 'O' || next_ch == 'b' || next_ch == 'B' {
+                if next_ch == 'x'
+                    || next_ch == 'X'
+                    || next_ch == 'o'
+                    || next_ch == 'O'
+                    || next_ch == 'b'
+                    || next_ch == 'B'
+                {
                     lexeme.push(ch);
                     lexeme.push(next_ch);
                     i += 1 + next_ch.len_utf8();

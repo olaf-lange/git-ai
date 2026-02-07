@@ -4,7 +4,7 @@
 //! Server handles idempotency - no retry/queue logic needed.
 
 use crate::error::GitAiError;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
@@ -194,9 +194,7 @@ impl MetricsDatabase {
         let tx = self.conn.transaction()?;
 
         {
-            let mut stmt = tx.prepare_cached(
-                "INSERT INTO metrics (event_json) VALUES (?1)",
-            )?;
+            let mut stmt = tx.prepare_cached("INSERT INTO metrics (event_json) VALUES (?1)")?;
 
             for event_json in events {
                 stmt.execute(params![event_json])?;
@@ -209,9 +207,9 @@ impl MetricsDatabase {
 
     /// Get batch of events (oldest first)
     pub fn get_batch(&self, limit: usize) -> Result<Vec<MetricRecord>, GitAiError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, event_json FROM metrics ORDER BY id ASC LIMIT ?1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, event_json FROM metrics ORDER BY id ASC LIMIT ?1")?;
 
         let rows = stmt.query_map(params![limit], |row| {
             Ok(MetricRecord {
@@ -237,9 +235,7 @@ impl MetricsDatabase {
         let tx = self.conn.transaction()?;
 
         {
-            let mut stmt = tx.prepare_cached(
-                "DELETE FROM metrics WHERE id = ?1",
-            )?;
+            let mut stmt = tx.prepare_cached("DELETE FROM metrics WHERE id = ?1")?;
 
             for id in ids {
                 stmt.execute(params![id])?;
@@ -252,11 +248,9 @@ impl MetricsDatabase {
 
     /// Get count of pending metrics
     pub fn count(&self) -> Result<usize, GitAiError> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM metrics",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM metrics", [], |row| row.get(0))?;
         Ok(count as usize)
     }
 }

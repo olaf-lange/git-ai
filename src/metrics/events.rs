@@ -1,9 +1,9 @@
 //! Event-specific value structs for metrics.
 
 use super::pos_encoded::{
-    sparse_get_string, sparse_get_u32, sparse_get_u64, sparse_get_vec_string, sparse_get_vec_u32,
-    sparse_get_vec_u64, sparse_set, string_to_json, u32_to_json, u64_to_json, vec_string_to_json,
-    vec_u32_to_json, vec_u64_to_json, PosEncoded, PosField,
+    PosEncoded, PosField, sparse_get_string, sparse_get_u32, sparse_get_u64, sparse_get_vec_string,
+    sparse_get_vec_u32, sparse_get_vec_u64, sparse_set, string_to_json, u32_to_json, u64_to_json,
+    vec_string_to_json, vec_u32_to_json, vec_u64_to_json,
 };
 use super::types::{EventValues, MetricEventId, SparseArray};
 
@@ -383,9 +383,9 @@ impl EventValues for AgentUsageValues {
 /// Value positions for "install_hooks" event.
 /// One event per tool attempted during install-hooks.
 pub mod install_hooks_pos {
-    pub const TOOL_ID: usize = 0;   // String - tool id (e.g., "cursor", "fork")
-    pub const STATUS: usize = 1;    // String - "not_found", "installed", "already_installed", "failed"
-    pub const MESSAGE: usize = 2;   // Option<String> - error message or warnings
+    pub const TOOL_ID: usize = 0; // String - tool id (e.g., "cursor", "fork")
+    pub const STATUS: usize = 1; // String - "not_found", "installed", "already_installed", "failed"
+    pub const MESSAGE: usize = 2; // Option<String> - error message or warnings
 }
 
 /// Values for Event ID 3: install_hooks
@@ -608,11 +608,7 @@ impl PosEncoded for CheckpointValues {
             checkpoint_pos::CHECKPOINT_TS,
             u64_to_json(&self.checkpoint_ts),
         );
-        sparse_set(
-            &mut map,
-            checkpoint_pos::KIND,
-            string_to_json(&self.kind),
-        );
+        sparse_set(&mut map, checkpoint_pos::KIND, string_to_json(&self.kind));
         sparse_set(
             &mut map,
             checkpoint_pos::FILE_PATH,
@@ -691,7 +687,10 @@ mod tests {
         assert_eq!(values.human_additions, Some(Some(50)));
         assert_eq!(
             values.tool_model_pairs,
-            Some(Some(vec!["all".to_string(), "claude-code:claude-3".to_string()]))
+            Some(Some(vec![
+                "all".to_string(),
+                "claude-code:claude-3".to_string()
+            ]))
         );
         assert_eq!(values.ai_additions, Some(Some(vec![100, 70])));
     }

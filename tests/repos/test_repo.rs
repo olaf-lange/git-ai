@@ -360,9 +360,10 @@ impl TestRepo {
 
         // Add config patch as environment variable if present
         if let Some(patch) = &self.config_patch
-            && let Ok(patch_json) = serde_json::to_string(patch) {
-                command.env("GIT_AI_TEST_CONFIG_PATCH", patch_json);
-            }
+            && let Ok(patch_json) = serde_json::to_string(patch)
+        {
+            command.env("GIT_AI_TEST_CONFIG_PATCH", patch_json);
+        }
 
         // Add test database path for isolation
         command.env("GIT_AI_TEST_DB_PATH", self.test_db_path.to_str().unwrap());
@@ -372,8 +373,9 @@ impl TestRepo {
             command.env(key, value);
         }
 
-        let output = command.output().unwrap_or_else(|_| panic!("Failed to execute git command with env: {:?}",
-            args));
+        let output = command
+            .output()
+            .unwrap_or_else(|_| panic!("Failed to execute git command with env: {:?}", args));
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -401,9 +403,10 @@ impl TestRepo {
 
         // Add config patch as environment variable if present
         if let Some(patch) = &self.config_patch
-            && let Ok(patch_json) = serde_json::to_string(patch) {
-                command.env("GIT_AI_TEST_CONFIG_PATCH", patch_json);
-            }
+            && let Ok(patch_json) = serde_json::to_string(patch)
+        {
+            command.env("GIT_AI_TEST_CONFIG_PATCH", patch_json);
+        }
 
         // Add test database path for isolation
         command.env("GIT_AI_TEST_DB_PATH", self.test_db_path.to_str().unwrap());
@@ -452,9 +455,10 @@ impl TestRepo {
 
         // Add config patch as environment variable if present
         if let Some(patch) = &self.config_patch
-            && let Ok(patch_json) = serde_json::to_string(patch) {
-                command.env("GIT_AI_TEST_CONFIG_PATCH", patch_json);
-            }
+            && let Ok(patch_json) = serde_json::to_string(patch)
+        {
+            command.env("GIT_AI_TEST_CONFIG_PATCH", patch_json);
+        }
 
         let mut child = command
             .spawn()
@@ -648,8 +652,12 @@ fn compile_binary() -> PathBuf {
     }
 
     // Respect CARGO_TARGET_DIR if set, otherwise fall back to manifest-relative target/
-    let target_dir = std::env::var("CARGO_TARGET_DIR")
-        .unwrap_or_else(|_| PathBuf::from(manifest_dir).join("target").to_string_lossy().into_owned());
+    let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
+        PathBuf::from(manifest_dir)
+            .join("target")
+            .to_string_lossy()
+            .into_owned()
+    });
     PathBuf::from(target_dir).join("debug/git-ai")
 }
 

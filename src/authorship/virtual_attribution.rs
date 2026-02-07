@@ -157,9 +157,10 @@ impl VirtualAttributions {
         // Check the most recent commit with this prompt ID
         if let Some(latest_sha) = shas.first()
             && let Ok(log) = crate::git::refs::get_reference_as_authorship_log_v3(repo, latest_sha)
-                && let Some(prompt) = log.metadata.prompts.get(prompt_id) {
-                    return Ok((latest_sha.clone(), prompt.clone()));
-                }
+            && let Some(prompt) = log.metadata.prompts.get(prompt_id)
+        {
+            return Ok((latest_sha.clone(), prompt.clone()));
+        }
 
         Err(GitAiError::Generic(format!(
             "Prompt not found in history: {}",
@@ -669,37 +670,38 @@ fn collect_unstaged_hunks(
     // Check for untracked files in pathspecs that git diff didn't find
     // These are files that exist in the working directory but aren't tracked by git
     if let Some(paths) = pathspecs
-        && let Ok(workdir) = repo.workdir() {
-            for pathspec in paths {
-                // Skip if we already found this file in git diff
-                if unstaged_hunks.contains_key(pathspec) {
-                    continue;
-                }
+        && let Ok(workdir) = repo.workdir()
+    {
+        for pathspec in paths {
+            // Skip if we already found this file in git diff
+            if unstaged_hunks.contains_key(pathspec) {
+                continue;
+            }
 
-                // Check if file exists in the commit - if it does, it's tracked and git diff should handle it
-                // Only process truly untracked files (files that don't exist in the commit tree)
-                if file_exists_in_commit(repo, commit_sha, pathspec).unwrap_or(false) {
-                    continue;
-                }
+            // Check if file exists in the commit - if it does, it's tracked and git diff should handle it
+            // Only process truly untracked files (files that don't exist in the commit tree)
+            if file_exists_in_commit(repo, commit_sha, pathspec).unwrap_or(false) {
+                continue;
+            }
 
-                // Check if file exists in working directory
-                let file_path = workdir.join(pathspec);
-                if file_path.exists() && file_path.is_file() {
-                    // Try to read the file
-                    if let Ok(content) = std::fs::read_to_string(&file_path) {
-                        // Count the lines - all lines are "unstaged" since the file is untracked
-                        let line_count = content.lines().count() as u32;
-                        if line_count > 0 {
-                            // Create a range covering all lines (1-indexed)
-                            let range = vec![LineRange::Range(1, line_count)];
-                            unstaged_hunks.insert(pathspec.clone(), range.clone());
-                            // Untracked files are pure insertions (the entire file is new)
-                            pure_insertion_hunks.insert(pathspec.clone(), range);
-                        }
+            // Check if file exists in working directory
+            let file_path = workdir.join(pathspec);
+            if file_path.exists() && file_path.is_file() {
+                // Try to read the file
+                if let Ok(content) = std::fs::read_to_string(&file_path) {
+                    // Count the lines - all lines are "unstaged" since the file is untracked
+                    let line_count = content.lines().count() as u32;
+                    if line_count > 0 {
+                        // Create a range covering all lines (1-indexed)
+                        let range = vec![LineRange::Range(1, line_count)];
+                        unstaged_hunks.insert(pathspec.clone(), range.clone());
+                        // Untracked files are pure insertions (the entire file is new)
+                        pure_insertion_hunks.insert(pathspec.clone(), range);
                     }
                 }
             }
         }
+    }
 
     Ok((unstaged_hunks, pure_insertion_hunks))
 }
@@ -858,7 +860,7 @@ impl VirtualAttributions {
                                 .entry(line_attr.author_id.clone())
                                 .or_default()
                                 .push(commit_line_num);
-                        } 
+                        }
                         // Note: Lines that are neither unstaged nor in committed_hunks are lines that
                         // already existed in the parent commit. They are discarded (not added to uncommitted).
                     }
@@ -1373,11 +1375,8 @@ pub fn merge_attributions_favoring_first(
             };
 
         // Merge: primary wins overlaps, secondary fills gaps
-        let merged_char_attrs = merge_char_attributions(
-            &transformed_primary,
-            &transformed_secondary,
-            final_content,
-        );
+        let merged_char_attrs =
+            merge_char_attributions(&transformed_primary, &transformed_secondary, final_content);
 
         // Convert to line attributions
         let merged_line_attrs =
@@ -1462,9 +1461,10 @@ pub fn restore_stashed_va(
         for file_path in &stashed_files {
             let abs_path = workdir.join(file_path);
             if abs_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&abs_path) {
-                    working_files.insert(file_path.clone(), content);
-                }
+                && let Ok(content) = std::fs::read_to_string(&abs_path)
+            {
+                working_files.insert(file_path.clone(), content);
+            }
         }
     }
 
@@ -1609,28 +1609,30 @@ fn merge_char_attributions(
 
             if is_covered {
                 if let Some(range_start_idx) = range_start.take()
-                    && range_start_idx < start {
-                        result.push(Attribution::new(
-                            range_start_idx,
-                            start,
-                            attr.author_id.clone(),
-                            attr.ts,
-                        ));
-                    }
+                    && range_start_idx < start
+                {
+                    result.push(Attribution::new(
+                        range_start_idx,
+                        start,
+                        attr.author_id.clone(),
+                        attr.ts,
+                    ));
+                }
             } else if range_start.is_none() {
                 range_start = Some(start);
             }
         }
 
         if let Some(range_start_idx) = range_start.take()
-            && range_start_idx < safe_end {
-                result.push(Attribution::new(
-                    range_start_idx,
-                    safe_end,
-                    attr.author_id.clone(),
-                    attr.ts,
-                ));
-            }
+            && range_start_idx < safe_end
+        {
+            result.push(Attribution::new(
+                range_start_idx,
+                safe_end,
+                attr.author_id.clone(),
+                attr.ts,
+            ));
+        }
     }
 
     // Sort by start position.
@@ -1667,12 +1669,12 @@ fn compute_attributions_for_file(
     let mut ai_blame_opts = GitAiBlameOptions::default();
     #[allow(clippy::field_reassign_with_default)]
     {
-    ai_blame_opts.no_output = true;
-    ai_blame_opts.return_human_authors_as_human = true;
-    ai_blame_opts.use_prompt_hashes_as_names = true;
-    ai_blame_opts.newest_commit = Some(base_commit.to_string());
-    ai_blame_opts.oldest_commit = blame_start_commit;
-    ai_blame_opts.oldest_date = Some(*OLDEST_AI_BLAME_DATE);
+        ai_blame_opts.no_output = true;
+        ai_blame_opts.return_human_authors_as_human = true;
+        ai_blame_opts.use_prompt_hashes_as_names = true;
+        ai_blame_opts.newest_commit = Some(base_commit.to_string());
+        ai_blame_opts.oldest_commit = blame_start_commit;
+        ai_blame_opts.oldest_date = Some(*OLDEST_AI_BLAME_DATE);
     }
 
     // Run blame at the base commit

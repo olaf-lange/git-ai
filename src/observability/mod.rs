@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use crate::metrics::{MetricEvent, METRICS_API_VERSION};
+use crate::metrics::{METRICS_API_VERSION, MetricEvent};
 
 pub mod flush;
 pub mod wrapper_performance_targets;
@@ -106,7 +106,6 @@ fn get_observability() -> &'static Mutex<ObservabilityInner> {
     })
 }
 
-
 /// Append an envelope (buffer if no repo context, write to disk if context set)
 fn append_envelope(envelope: LogEnvelope) {
     let mut obs = get_observability().lock().unwrap();
@@ -120,9 +119,10 @@ fn append_envelope(envelope: LogEnvelope) {
             drop(obs); // Release lock before file I/O
 
             if let Some(json) = envelope.to_json()
-                && let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
-                    let _ = writeln!(file, "{}", json);
-                }
+                && let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path)
+            {
+                let _ = writeln!(file, "{}", json);
+            }
         }
     }
 }

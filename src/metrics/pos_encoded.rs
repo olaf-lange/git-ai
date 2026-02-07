@@ -54,7 +54,7 @@ pub fn u64_to_json(field: &PosField<u64>) -> Option<Value> {
 #[allow(dead_code)]
 pub fn sparse_get_string(arr: &SparseArray, pos: usize) -> PosField<String> {
     match arr.get(&pos.to_string()) {
-        None => None, // not-set
+        None => None,                    // not-set
         Some(Value::Null) => Some(None), // explicit null
         Some(Value::String(s)) => Some(Some(s.clone())),
         Some(_) => None, // wrong type, treat as not-set
@@ -148,13 +148,15 @@ pub fn sparse_get_vec_u32(arr: &SparseArray, pos: usize) -> PosField<Vec<u32>> {
         Some(Value::Array(arr)) => {
             let nums: Vec<u32> = arr
                 .iter()
-                .filter_map(|v| v.as_u64().and_then(|n| {
-                    if n <= u32::MAX as u64 {
-                        Some(n as u32)
-                    } else {
-                        None
-                    }
-                }))
+                .filter_map(|v| {
+                    v.as_u64().and_then(|n| {
+                        if n <= u32::MAX as u64 {
+                            Some(n as u32)
+                        } else {
+                            None
+                        }
+                    })
+                })
                 .collect();
             Some(Some(nums))
         }

@@ -810,7 +810,14 @@ fn test_rebase_preserve_merges() {
     // Get the rebased side branch commit (the one that created side.txt)
     // Use git log to find the commit that added side.txt
     let side_commit_sha = repo
-        .git(&["log", "--all", "--format=%H", "--diff-filter=A", "--", "side.txt"])
+        .git(&[
+            "log",
+            "--all",
+            "--format=%H",
+            "--diff-filter=A",
+            "--",
+            "side.txt",
+        ])
         .expect("Should find commit that added side.txt")
         .trim()
         .lines()

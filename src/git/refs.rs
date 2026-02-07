@@ -270,12 +270,13 @@ pub fn grep_ai_notes(repo: &Repository, pattern: &str) -> Result<Vec<String>, Gi
     let mut shas = HashSet::new();
     for line in stdout.lines() {
         if let Some(path_and_rest) = line.strip_prefix("refs/notes/ai:")
-            && let Some(path_end) = path_and_rest.find(':') {
-                let path = &path_and_rest[..path_end];
-                // Path is in format "ab/cdef123..." - combine to get full SHA
-                let sha = path.replace('/', "");
-                shas.insert(sha);
-            }
+            && let Some(path_end) = path_and_rest.find(':')
+        {
+            let path = &path_and_rest[..path_end];
+            // Path is in format "ab/cdef123..." - combine to get full SHA
+            let sha = path.replace('/', "");
+            shas.insert(sha);
+        }
     }
 
     // If we have multiple results, sort by commit date (newest first)

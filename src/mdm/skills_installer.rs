@@ -87,7 +87,11 @@ fn generate_marketplace() -> Marketplace {
             description: PLUGIN_DESCRIPTION.to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             category: "ai-tools".to_string(),
-            keywords: vec!["git-ai".to_string(), "prompts".to_string(), "analytics".to_string()],
+            keywords: vec![
+                "git-ai".to_string(),
+                "prompts".to_string(),
+                "analytics".to_string(),
+            ],
         }],
     }
 }
@@ -126,8 +130,9 @@ pub struct SkillsInstallResult {
 ///         └── prompt-analysis.md
 ///         └── (future commands...)
 pub fn install_skills(dry_run: bool, _verbose: bool) -> Result<SkillsInstallResult, GitAiError> {
-    let skills_base = skills_dir_path()
-        .ok_or_else(|| GitAiError::Generic("Could not determine skills directory path".to_string()))?;
+    let skills_base = skills_dir_path().ok_or_else(|| {
+        GitAiError::Generic("Could not determine skills directory path".to_string())
+    })?;
 
     if dry_run {
         return Ok(SkillsInstallResult {
@@ -186,8 +191,9 @@ pub fn install_skills(dry_run: bool, _verbose: bool) -> Result<SkillsInstallResu
 
 /// Uninstall all skills by removing ~/.git-ai/skills/
 pub fn uninstall_skills(dry_run: bool, _verbose: bool) -> Result<SkillsInstallResult, GitAiError> {
-    let skills_base = skills_dir_path()
-        .ok_or_else(|| GitAiError::Generic("Could not determine skills directory path".to_string()))?;
+    let skills_base = skills_dir_path().ok_or_else(|| {
+        GitAiError::Generic("Could not determine skills directory path".to_string())
+    })?;
 
     if !skills_base.exists() {
         return Ok(SkillsInstallResult {

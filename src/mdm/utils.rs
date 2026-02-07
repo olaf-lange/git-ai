@@ -100,7 +100,9 @@ pub fn binary_exists(name: &str) -> bool {
 /// In Codespaces, VS Code extensions must be configured via devcontainer.json
 /// rather than installed via CLI
 pub fn is_github_codespaces() -> bool {
-    std::env::var("CODESPACES").map(|v| v == "true").unwrap_or(false)
+    std::env::var("CODESPACES")
+        .map(|v| v == "true")
+        .unwrap_or(false)
 }
 
 /// Get the user's home directory
@@ -334,9 +336,7 @@ pub fn git_shim_path() -> PathBuf {
 /// Get the git shim path as a string (for use in settings files)
 #[cfg(windows)]
 pub fn git_shim_path_string() -> String {
-    git_shim_path()
-        .to_string_lossy()
-        .to_string()
+    git_shim_path().to_string_lossy().to_string()
 }
 
 /// Update the git.path setting in a VS Code/Cursor settings file
@@ -409,9 +409,10 @@ pub fn update_git_path_setting(
 
     if !dry_run {
         if let Some(parent) = settings_path.parent()
-            && !parent.exists() {
-                fs::create_dir_all(parent)?;
-            }
+            && !parent.exists()
+        {
+            fs::create_dir_all(parent)?;
+        }
         write_atomic(settings_path, new_content.as_bytes())?;
     }
 

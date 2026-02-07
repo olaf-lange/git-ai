@@ -499,14 +499,9 @@ impl TmpRepo {
             )?;
             (parent_sha, commit_id)
         } else {
-            let commit_id = self.repo_git2.commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                message,
-                &tree,
-                &[],
-            )?;
+            let commit_id =
+                self.repo_git2
+                    .commit(Some("HEAD"), &signature, &signature, message, &tree, &[])?;
             (None, commit_id)
         };
 
@@ -958,14 +953,9 @@ impl TmpRepo {
             )?;
             (parent_sha, commit_id)
         } else {
-            let commit_id = self.repo_git2.commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                message,
-                &tree,
-                &[],
-            )?;
+            let commit_id =
+                self.repo_git2
+                    .commit(Some("HEAD"), &signature, &signature, message, &tree, &[])?;
             (None, commit_id)
         };
 

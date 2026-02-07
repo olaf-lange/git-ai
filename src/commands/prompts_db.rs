@@ -9,9 +9,9 @@ use crate::error::GitAiError;
 use crate::git::find_repository_in_path;
 use crate::git::repository::{Repository, exec_git, exec_git_stdin};
 use chrono::{Local, TimeZone};
-use std::collections::HashSet;
 use rusqlite::{Connection, params};
 use serde::Serialize;
+use std::collections::HashSet;
 use std::env;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -185,7 +185,11 @@ fn handle_populate(args: &[String]) {
 
     // Log filter info
     eprintln!("Fetching prompts...");
-    eprintln!("  since: {} ({} days ago)", format_timestamp_as_date(since_timestamp), since_str);
+    eprintln!(
+        "  since: {} ({} days ago)",
+        format_timestamp_as_date(since_timestamp),
+        since_str
+    );
     if let Some(ref author) = author_filter {
         eprintln!("  author: {}", author);
     } else {
@@ -522,7 +526,9 @@ fn handle_count(_args: &[String]) {
         }
     };
 
-    match conn.query_row("SELECT COUNT(*) FROM prompts", [], |row| row.get::<_, i64>(0)) {
+    match conn.query_row("SELECT COUNT(*) FROM prompts", [], |row| {
+        row.get::<_, i64>(0)
+    }) {
         Ok(count) => {
             println!("{}", count);
         }
@@ -726,7 +732,10 @@ fn fetch_from_internal_db(
 
         // Track workdir counts (only for new prompts)
         if is_new {
-            let wd = record.workdir.clone().unwrap_or_else(|| "(unknown)".to_string());
+            let wd = record
+                .workdir
+                .clone()
+                .unwrap_or_else(|| "(unknown)".to_string());
             *workdir_counts.entry(wd).or_insert(0) += 1;
             new_count += 1;
         }

@@ -20,7 +20,9 @@ fn extract_authors(output: &str) -> Vec<String> {
             // Extract author name from blame line format
             // Format: sha (author date line) code
             if let Some(start) = line.find('(') {
-                line[start..].find(' ').map(|end| line[start + 1..start + end].trim().to_string())
+                line[start..]
+                    .find(' ')
+                    .map(|end| line[start + 1..start + end].trim().to_string())
             } else {
                 None
             }

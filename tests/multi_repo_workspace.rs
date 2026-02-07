@@ -9,7 +9,9 @@
 //! 4. Edge cases with nested git directories
 
 use git_ai::error::GitAiError;
-use git_ai::git::repository::{find_repository_for_file, find_repository_in_path, group_files_by_repository};
+use git_ai::git::repository::{
+    find_repository_for_file, find_repository_in_path, group_files_by_repository,
+};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -143,15 +145,16 @@ fn test_nonexistent_file_path() {
         nonexistent_file.to_str().unwrap().to_string(),
     ];
 
-    let (repo_files, _orphan_files) = group_files_by_repository(
-        &file_paths,
-        Some(workspace.to_str().unwrap()),
-    );
+    let (repo_files, _orphan_files) =
+        group_files_by_repository(&file_paths, Some(workspace.to_str().unwrap()));
 
     // The real file should be found in the repo
     // The nonexistent file behavior depends on implementation -
     // it should still find the repo since the parent directory exists
-    assert!(!repo_files.is_empty(), "Should find repository for existing file");
+    assert!(
+        !repo_files.is_empty(),
+        "Should find repository for existing file"
+    );
 
     cleanup_tmp_dir(&workspace);
 }
@@ -173,13 +176,14 @@ fn test_all_files_orphaned() {
         file2.to_str().unwrap().to_string(),
     ];
 
-    let (repo_files, orphan_files) = group_files_by_repository(
-        &file_paths,
-        Some(workspace.to_str().unwrap()),
-    );
+    let (repo_files, orphan_files) =
+        group_files_by_repository(&file_paths, Some(workspace.to_str().unwrap()));
 
     // All files should be orphans
-    assert!(repo_files.is_empty(), "Should have no repos when all files are orphans");
+    assert!(
+        repo_files.is_empty(),
+        "Should have no repos when all files are orphans"
+    );
     assert_eq!(orphan_files.len(), 2, "All files should be orphans");
 
     cleanup_tmp_dir(&workspace);
@@ -211,10 +215,8 @@ fn test_single_repo_in_multi_repo_workspace() {
         file_b2.to_str().unwrap().to_string(),
     ];
 
-    let (repo_files, orphan_files) = group_files_by_repository(
-        &file_paths,
-        Some(workspace.to_str().unwrap()),
-    );
+    let (repo_files, orphan_files) =
+        group_files_by_repository(&file_paths, Some(workspace.to_str().unwrap()));
 
     // Should detect only 1 repository (repo-b)
     assert_eq!(
@@ -251,10 +253,8 @@ fn test_files_with_spaces_in_path() {
 
     let file_paths = vec![file_with_spaces.to_str().unwrap().to_string()];
 
-    let (repo_files, orphan_files) = group_files_by_repository(
-        &file_paths,
-        Some(workspace.to_str().unwrap()),
-    );
+    let (repo_files, orphan_files) =
+        group_files_by_repository(&file_paths, Some(workspace.to_str().unwrap()));
 
     assert_eq!(repo_files.len(), 1, "Should find repo with spaces in path");
     assert!(orphan_files.is_empty(), "No orphan files");
@@ -276,7 +276,7 @@ fn test_symlinked_repository() {
 
     // Create symlink to the repo
     let symlink_path = workspace.join("linked-repo");
-    
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::symlink;
@@ -319,10 +319,8 @@ fn test_bare_repository_handling() {
         create_file(&file, "content").unwrap();
 
         // File in normal repo should work fine
-        let result = find_repository_for_file(
-            file.to_str().unwrap(),
-            Some(workspace.to_str().unwrap()),
-        );
+        let result =
+            find_repository_for_file(file.to_str().unwrap(), Some(workspace.to_str().unwrap()));
 
         assert!(result.is_ok(), "Should find normal repository");
     }
@@ -347,10 +345,8 @@ fn test_duplicate_files_same_repo() {
         file.to_str().unwrap().to_string(),
     ];
 
-    let (repo_files, orphan_files) = group_files_by_repository(
-        &file_paths,
-        Some(workspace.to_str().unwrap()),
-    );
+    let (repo_files, orphan_files) =
+        group_files_by_repository(&file_paths, Some(workspace.to_str().unwrap()));
 
     assert_eq!(repo_files.len(), 1, "Should have 1 repository");
     assert!(orphan_files.is_empty(), "No orphan files");
@@ -383,12 +379,13 @@ fn test_find_repository_for_file_with_multiple_repos() {
     create_file(&file_b, "content b").unwrap();
 
     // Test file in repo-a
-    let result_a = find_repository_for_file(
-        file_a.to_str().unwrap(),
-        Some(workspace.to_str().unwrap()),
-    );
+    let result_a =
+        find_repository_for_file(file_a.to_str().unwrap(), Some(workspace.to_str().unwrap()));
 
-    assert!(result_a.is_ok(), "Should find repository for file in repo-a");
+    assert!(
+        result_a.is_ok(),
+        "Should find repository for file in repo-a"
+    );
     let repo_a_found = result_a.unwrap();
     let workdir_a = repo_a_found.workdir().unwrap();
     assert!(
@@ -397,12 +394,13 @@ fn test_find_repository_for_file_with_multiple_repos() {
     );
 
     // Test file in repo-b
-    let result_b = find_repository_for_file(
-        file_b.to_str().unwrap(),
-        Some(workspace.to_str().unwrap()),
-    );
+    let result_b =
+        find_repository_for_file(file_b.to_str().unwrap(), Some(workspace.to_str().unwrap()));
 
-    assert!(result_b.is_ok(), "Should find repository for file in repo-b");
+    assert!(
+        result_b.is_ok(),
+        "Should find repository for file in repo-b"
+    );
     let repo_b_found = result_b.unwrap();
     let workdir_b = repo_b_found.workdir().unwrap();
     assert!(
@@ -428,7 +426,10 @@ fn test_find_repository_for_file_no_repo_found() {
         Some(workspace.to_str().unwrap()),
     );
 
-    assert!(result.is_err(), "Should not find repository for orphan file");
+    assert!(
+        result.is_err(),
+        "Should not find repository for orphan file"
+    );
 
     cleanup_tmp_dir(&workspace);
 }
@@ -460,10 +461,7 @@ fn test_find_repository_for_file_respects_workspace_boundary() {
     );
 
     // When no workspace boundary is set, should find the parent repo
-    let result_without_boundary = find_repository_for_file(
-        file_path.to_str().unwrap(),
-        None,
-    );
+    let result_without_boundary = find_repository_for_file(file_path.to_str().unwrap(), None);
 
     assert!(
         result_without_boundary.is_ok(),
@@ -504,24 +502,14 @@ fn test_group_files_by_repository() {
         orphan.to_str().unwrap().to_string(),
     ];
 
-    let (repo_files, orphan_files) = group_files_by_repository(
-        &file_paths,
-        Some(workspace.to_str().unwrap()),
-    );
+    let (repo_files, orphan_files) =
+        group_files_by_repository(&file_paths, Some(workspace.to_str().unwrap()));
 
     // Should have 2 repositories detected
-    assert_eq!(
-        repo_files.len(),
-        2,
-        "Should detect 2 repositories"
-    );
+    assert_eq!(repo_files.len(), 2, "Should detect 2 repositories");
 
     // Should have 1 orphan file
-    assert_eq!(
-        orphan_files.len(),
-        1,
-        "Should have 1 orphan file"
-    );
+    assert_eq!(orphan_files.len(), 1, "Should have 1 orphan file");
     assert!(
         orphan_files[0].contains("orphan.txt"),
         "Orphan file should be orphan.txt"
@@ -622,7 +610,10 @@ fn test_find_repository_in_path_still_works() {
 
     // The original function should work
     let result = find_repository_in_path(repo.to_str().unwrap());
-    assert!(result.is_ok(), "find_repository_in_path should work for normal repos");
+    assert!(
+        result.is_ok(),
+        "find_repository_in_path should work for normal repos"
+    );
 
     cleanup_tmp_dir(&repo);
 }
@@ -639,10 +630,8 @@ fn test_find_repository_for_directory() {
     fs::create_dir_all(&subdir).unwrap();
 
     // Test finding repo from a directory path
-    let result = find_repository_for_file(
-        subdir.to_str().unwrap(),
-        Some(workspace.to_str().unwrap()),
-    );
+    let result =
+        find_repository_for_file(subdir.to_str().unwrap(), Some(workspace.to_str().unwrap()));
 
     assert!(result.is_ok(), "Should find repository from directory path");
     let workdir = result.unwrap().workdir().unwrap();
@@ -659,8 +648,14 @@ fn test_empty_file_list_grouping() {
     // Test edge case with empty file list
     let (repo_files, orphan_files) = group_files_by_repository(&[], None);
 
-    assert!(repo_files.is_empty(), "Should have no repos with empty file list");
-    assert!(orphan_files.is_empty(), "Should have no orphans with empty file list");
+    assert!(
+        repo_files.is_empty(),
+        "Should have no repos with empty file list"
+    );
+    assert!(
+        orphan_files.is_empty(),
+        "Should have no orphans with empty file list"
+    );
 }
 
 #[test]
@@ -679,7 +674,10 @@ fn test_cross_repo_edits_grouping() {
 
     // Create files in each repository (simulating an AI making related changes across repos)
     let frontend_file1 = frontend_repo.join("src").join("App.tsx");
-    let frontend_file2 = frontend_repo.join("src").join("components").join("Button.tsx");
+    let frontend_file2 = frontend_repo
+        .join("src")
+        .join("components")
+        .join("Button.tsx");
     let backend_file = backend_repo.join("src").join("api.py");
     let shared_file = shared_repo.join("types").join("shared_types.ts");
 
@@ -696,10 +694,8 @@ fn test_cross_repo_edits_grouping() {
         shared_file.to_str().unwrap().to_string(),
     ];
 
-    let (repo_files, orphan_files) = group_files_by_repository(
-        &file_paths,
-        Some(workspace.to_str().unwrap()),
-    );
+    let (repo_files, orphan_files) =
+        group_files_by_repository(&file_paths, Some(workspace.to_str().unwrap()));
 
     // Should have 3 repositories detected
     assert_eq!(
@@ -709,10 +705,7 @@ fn test_cross_repo_edits_grouping() {
     );
 
     // No orphan files
-    assert!(
-        orphan_files.is_empty(),
-        "Should have no orphan files"
-    );
+    assert!(orphan_files.is_empty(), "Should have no orphan files");
 
     // Verify correct distribution
     let mut frontend_count = 0;
@@ -754,8 +747,10 @@ fn test_workspace_relative_paths() {
 
     // Test with workspace-relative paths (simulating what an IDE might send)
     // When paths are relative to workspace root
-    let relative_paths = ["my-project/src/main.rs".to_string(),
-        "my-project/lib/utils.rs".to_string()];
+    let relative_paths = [
+        "my-project/src/main.rs".to_string(),
+        "my-project/lib/utils.rs".to_string(),
+    ];
 
     // Convert to absolute paths (simulating what handle_checkpoint does)
     let absolute_paths: Vec<String> = relative_paths
@@ -763,10 +758,8 @@ fn test_workspace_relative_paths() {
         .map(|p| workspace.join(p).to_string_lossy().to_string())
         .collect();
 
-    let (repo_files, orphan_files) = group_files_by_repository(
-        &absolute_paths,
-        Some(workspace.to_str().unwrap()),
-    );
+    let (repo_files, orphan_files) =
+        group_files_by_repository(&absolute_paths, Some(workspace.to_str().unwrap()));
 
     assert_eq!(repo_files.len(), 1, "Should find 1 repository");
     assert!(orphan_files.is_empty(), "Should have no orphan files");
@@ -803,7 +796,10 @@ fn test_deeply_nested_file_detection() {
         Some(workspace.to_str().unwrap()),
     );
 
-    assert!(result.is_ok(), "Should find repository for deeply nested file");
+    assert!(
+        result.is_ok(),
+        "Should find repository for deeply nested file"
+    );
 
     let workdir = result.unwrap().workdir().unwrap();
     assert!(
@@ -834,10 +830,8 @@ fn test_mixed_absolute_and_relative_grouping() {
         file2.to_str().unwrap().to_string(), // Already absolute
     ];
 
-    let (repo_files, orphan_files) = group_files_by_repository(
-        &paths,
-        Some(workspace.to_str().unwrap()),
-    );
+    let (repo_files, orphan_files) =
+        group_files_by_repository(&paths, Some(workspace.to_str().unwrap()));
 
     assert_eq!(repo_files.len(), 1, "Should detect 1 repository");
     assert!(orphan_files.is_empty(), "Should have no orphans");
@@ -880,10 +874,8 @@ fn test_repository_isolation() {
         beta_config.to_str().unwrap().to_string(),
     ];
 
-    let (repo_files, orphan_files) = group_files_by_repository(
-        &file_paths,
-        Some(workspace.to_str().unwrap()),
-    );
+    let (repo_files, orphan_files) =
+        group_files_by_repository(&file_paths, Some(workspace.to_str().unwrap()));
 
     // Verify isolation - should be 2 separate repos
     assert_eq!(repo_files.len(), 2, "Should have 2 isolated repositories");

@@ -1,7 +1,7 @@
 mod repos;
 
 use repos::test_file::ExpectedLineExt;
-use repos::test_repo::{default_branchname, TestRepo};
+use repos::test_repo::{TestRepo, default_branchname};
 
 /// Test that checkout to a different branch migrates the working log to the new HEAD.
 #[test]

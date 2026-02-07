@@ -4,7 +4,7 @@ use crate::authorship::working_log::Checkpoint;
 use crate::error::GitAiError;
 use crate::utils::debug_log;
 use dirs;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -77,21 +77,21 @@ static INTERNAL_DB: OnceLock<Mutex<InternalDatabase>> = OnceLock::new();
 /// Prompt record for database storage
 #[derive(Debug, Clone)]
 pub struct PromptDbRecord {
-    pub id: String,                                // 16-char short hash
-    pub workdir: Option<String>,                   // Repository working directory
-    pub tool: String,                              // Agent tool name
-    pub model: String,                             // Model name
-    pub external_thread_id: String,                // Original agent_id.id
-    pub messages: AiTranscript,                    // Transcript
-    pub commit_sha: Option<String>,                // Commit SHA (nullable)
-    pub agent_metadata: Option<HashMap<String, String>>,  // Agent metadata (transcript paths, etc.)
-    pub human_author: Option<String>,              // Human author from checkpoint
-    pub total_additions: Option<u32>,              // Line additions from checkpoint stats
-    pub total_deletions: Option<u32>,              // Line deletions from checkpoint stats
-    pub accepted_lines: Option<u32>,               // Lines accepted in commit (future)
-    pub overridden_lines: Option<u32>,             // Lines overridden in commit (future)
-    pub created_at: i64,                           // Unix timestamp
-    pub updated_at: i64,                           // Unix timestamp
+    pub id: String,                                      // 16-char short hash
+    pub workdir: Option<String>,                         // Repository working directory
+    pub tool: String,                                    // Agent tool name
+    pub model: String,                                   // Model name
+    pub external_thread_id: String,                      // Original agent_id.id
+    pub messages: AiTranscript,                          // Transcript
+    pub commit_sha: Option<String>,                      // Commit SHA (nullable)
+    pub agent_metadata: Option<HashMap<String, String>>, // Agent metadata (transcript paths, etc.)
+    pub human_author: Option<String>,                    // Human author from checkpoint
+    pub total_additions: Option<u32>,                    // Line additions from checkpoint stats
+    pub total_deletions: Option<u32>,                    // Line deletions from checkpoint stats
+    pub accepted_lines: Option<u32>,                     // Lines accepted in commit (future)
+    pub overridden_lines: Option<u32>,                   // Lines overridden in commit (future)
+    pub created_at: i64,                                 // Unix timestamp
+    pub updated_at: i64,                                 // Unix timestamp
 }
 
 impl PromptDbRecord {
@@ -128,8 +128,8 @@ impl PromptDbRecord {
             human_author: Some(checkpoint.author.clone()),
             total_additions: Some(checkpoint.line_stats.additions),
             total_deletions: Some(checkpoint.line_stats.deletions),
-            accepted_lines: None,      // Not yet calculated
-            overridden_lines: None,    // Not yet calculated
+            accepted_lines: None,   // Not yet calculated
+            overridden_lines: None, // Not yet calculated
             created_at,
             updated_at,
         })
@@ -219,7 +219,11 @@ impl PromptDbRecord {
 
         let minutes = diff / 60;
         if minutes < 60 {
-            return format!("{} minute{} ago", minutes, if minutes == 1 { "" } else { "s" });
+            return format!(
+                "{} minute{} ago",
+                minutes,
+                if minutes == 1 { "" } else { "s" }
+            );
         }
 
         let hours = minutes / 60;
@@ -276,7 +280,7 @@ impl InternalDatabase {
                     eprintln!("[Error] Failed to initialize internal database: {}", e);
                     crate::observability::log_error(
                         &e,
-                        Some(serde_json::json!({"function": "InternalDatabase::global"}))
+                        Some(serde_json::json!({"function": "InternalDatabase::global"})),
                     );
                     // Create a dummy connection that will fail on any operation
                     // This allows the program to continue even if DB init fails
@@ -348,10 +352,7 @@ impl InternalDatabase {
 
         let home = dirs::home_dir()
             .ok_or_else(|| GitAiError::Generic("Could not determine home directory".to_string()))?;
-        Ok(home
-            .join(".git-ai")
-            .join("internal")
-            .join("db"))
+        Ok(home.join(".git-ai").join("internal").join("db"))
     }
 
     /// Initialize schema and handle migrations
@@ -445,18 +446,16 @@ impl InternalDatabase {
         }
 
         // Step 5: Verify final version matches expected
-        let final_version: usize = self
-            .conn
-            .query_row(
-                "SELECT value FROM schema_metadata WHERE key = 'version'",
-                [],
-                |row| {
-                    let version_str: String = row.get(0)?;
-                    version_str
-                        .parse::<usize>()
-                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
-                },
-            )?;
+        let final_version: usize = self.conn.query_row(
+            "SELECT value FROM schema_metadata WHERE key = 'version'",
+            [],
+            |row| {
+                let version_str: String = row.get(0)?;
+                version_str
+                    .parse::<usize>()
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+            },
+        )?;
 
         if final_version != SCHEMA_VERSION {
             return Err(GitAiError::Generic(format!(
@@ -611,7 +610,7 @@ impl InternalDatabase {
                     commit_sha, agent_metadata, human_author,
                     total_additions, total_deletions, accepted_lines,
                     overridden_lines, created_at, updated_at
-             FROM prompts WHERE id = ?1"
+             FROM prompts WHERE id = ?1",
         )?;
 
         let result = stmt.query_row(params![id], |row| {
@@ -665,7 +664,7 @@ impl InternalDatabase {
                     commit_sha, agent_metadata, human_author,
                     total_additions, total_deletions, accepted_lines,
                     overridden_lines, created_at, updated_at
-             FROM prompts WHERE commit_sha = ?1"
+             FROM prompts WHERE commit_sha = ?1",
         )?;
 
         let rows = stmt.query_map(params![commit_sha], |row| {
@@ -911,7 +910,10 @@ impl InternalDatabase {
     }
 
     /// Dequeue a batch of CAS objects for syncing (with lock acquisition)
-    pub fn dequeue_cas_batch(&mut self, batch_size: usize) -> Result<Vec<CasSyncRecord>, GitAiError> {
+    pub fn dequeue_cas_batch(
+        &mut self,
+        batch_size: usize,
+    ) -> Result<Vec<CasSyncRecord>, GitAiError> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -949,7 +951,8 @@ impl InternalDatabase {
 
         let rows = stmt.query_map(params![now, now, batch_size], |row| {
             let metadata_json: String = row.get(3)?;
-            let metadata: HashMap<String, String> = serde_json::from_str(&metadata_json).unwrap_or_default();
+            let metadata: HashMap<String, String> =
+                serde_json::from_str(&metadata_json).unwrap_or_default();
             let hash: String = row.get(1)?;
             let data: String = row.get(2)?;
             Ok(CasSyncRecord {
@@ -971,10 +974,8 @@ impl InternalDatabase {
 
     /// Delete a CAS sync record (on successful sync)
     pub fn delete_cas_sync_record(&mut self, id: i64) -> Result<(), GitAiError> {
-        self.conn.execute(
-            "DELETE FROM cas_sync_queue WHERE id = ?",
-            params![id],
-        )?;
+        self.conn
+            .execute("DELETE FROM cas_sync_queue WHERE id = ?", params![id])?;
         Ok(())
     }
 
@@ -1015,12 +1016,12 @@ impl InternalDatabase {
 /// Calculate next retry timestamp based on attempt number
 fn calculate_next_retry(attempts: u32, now: i64) -> i64 {
     let delay_seconds = match attempts {
-        1 => 5 * 60,          // 5 minutes
-        2 => 30 * 60,         // 30 minutes
-        3 => 2 * 60 * 60,     // 2 hours
-        4 => 6 * 60 * 60,     // 6 hours
-        5 => 12 * 60 * 60,    // 12 hours
-        _ => 24 * 60 * 60,    // 24 hours (attempts >= 6)
+        1 => 5 * 60,       // 5 minutes
+        2 => 30 * 60,      // 30 minutes
+        3 => 2 * 60 * 60,  // 2 hours
+        4 => 6 * 60 * 60,  // 6 hours
+        5 => 12 * 60 * 60, // 12 hours
+        _ => 24 * 60 * 60, // 24 hours (attempts >= 6)
     };
     now + delay_seconds
 }
@@ -1149,7 +1150,10 @@ mod tests {
         for record in &records {
             let retrieved = db.get_prompt(&record.id).unwrap();
             assert!(retrieved.is_some());
-            assert_eq!(retrieved.unwrap().external_thread_id, record.external_thread_id);
+            assert_eq!(
+                retrieved.unwrap().external_thread_id,
+                record.external_thread_id
+            );
         }
     }
 
@@ -1198,7 +1202,9 @@ mod tests {
 
     #[test]
     fn test_stats_fields_populated() {
-        use crate::authorship::working_log::{AgentId, Checkpoint, CheckpointKind, CheckpointLineStats};
+        use crate::authorship::working_log::{
+            AgentId, Checkpoint, CheckpointKind, CheckpointLineStats,
+        };
 
         let (mut db, _temp_dir) = create_test_db();
 
@@ -1230,8 +1236,9 @@ mod tests {
         };
 
         // Create record from checkpoint
-        let record = PromptDbRecord::from_checkpoint(&checkpoint, Some("/test/repo".to_string()), None)
-            .expect("Failed to create record from checkpoint");
+        let record =
+            PromptDbRecord::from_checkpoint(&checkpoint, Some("/test/repo".to_string()), None)
+                .expect("Failed to create record from checkpoint");
 
         // Verify stats fields are populated
         assert_eq!(record.human_author, Some("John Doe".to_string()));
@@ -1303,7 +1310,8 @@ mod tests {
             )
             .unwrap();
 
-        let stored_metadata: HashMap<String, String> = serde_json::from_str(&metadata_json).unwrap();
+        let stored_metadata: HashMap<String, String> =
+            serde_json::from_str(&metadata_json).unwrap();
         assert_eq!(stored_metadata.get("key1"), Some(&"value1".to_string()));
         assert_eq!(stored_metadata.get("key2"), Some(&"value2".to_string()));
 
@@ -1328,12 +1336,26 @@ mod tests {
         let hash = db.enqueue_cas_object(&json_data, None).unwrap();
 
         // Verify it was inserted with correct defaults
-        let (stored_hash, stored_data, metadata, status, attempts): (String, String, String, String, u32) = db
+        let (stored_hash, stored_data, metadata, status, attempts): (
+            String,
+            String,
+            String,
+            String,
+            u32,
+        ) = db
             .conn
             .query_row(
                 "SELECT hash, data, metadata, status, attempts FROM cas_sync_queue WHERE hash = ?",
                 params![&hash],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
             )
             .unwrap();
 
@@ -1377,9 +1399,12 @@ mod tests {
         let (mut db, _temp_dir) = create_test_db();
 
         // Enqueue multiple objects with different content
-        db.enqueue_cas_object(&serde_json::json!({"id": 1}), None).unwrap();
-        db.enqueue_cas_object(&serde_json::json!({"id": 2}), None).unwrap();
-        db.enqueue_cas_object(&serde_json::json!({"id": 3}), None).unwrap();
+        db.enqueue_cas_object(&serde_json::json!({"id": 1}), None)
+            .unwrap();
+        db.enqueue_cas_object(&serde_json::json!({"id": 2}), None)
+            .unwrap();
+        db.enqueue_cas_object(&serde_json::json!({"id": 3}), None)
+            .unwrap();
 
         // Dequeue batch of 2
         let batch = db.dequeue_cas_batch(2).unwrap();
@@ -1540,7 +1565,8 @@ mod tests {
     fn test_update_cas_sync_failure() {
         let (mut db, _temp_dir) = create_test_db();
 
-        db.enqueue_cas_object(&serde_json::json!({"test": "failure"}), None).unwrap();
+        db.enqueue_cas_object(&serde_json::json!({"test": "failure"}), None)
+            .unwrap();
         let batch = db.dequeue_cas_batch(10).unwrap();
         let record = &batch[0];
 
@@ -1596,7 +1622,8 @@ mod tests {
     fn test_delete_cas_sync_record() {
         let (mut db, _temp_dir) = create_test_db();
 
-        db.enqueue_cas_object(&serde_json::json!({"test": "delete"}), None).unwrap();
+        db.enqueue_cas_object(&serde_json::json!({"test": "delete"}), None)
+            .unwrap();
         let batch = db.dequeue_cas_batch(10).unwrap();
         let record = &batch[0];
 
@@ -1620,12 +1647,12 @@ mod tests {
         let now = 1000000i64;
 
         // Test each attempt's backoff
-        assert_eq!(calculate_next_retry(1, now), now + 5 * 60);           // 5 min
-        assert_eq!(calculate_next_retry(2, now), now + 30 * 60);          // 30 min
-        assert_eq!(calculate_next_retry(3, now), now + 2 * 60 * 60);      // 2 hours
-        assert_eq!(calculate_next_retry(4, now), now + 6 * 60 * 60);      // 6 hours
-        assert_eq!(calculate_next_retry(5, now), now + 12 * 60 * 60);     // 12 hours
-        assert_eq!(calculate_next_retry(6, now), now + 24 * 60 * 60);     // 24 hours
-        assert_eq!(calculate_next_retry(7, now), now + 24 * 60 * 60);     // 24 hours (max)
+        assert_eq!(calculate_next_retry(1, now), now + 5 * 60); // 5 min
+        assert_eq!(calculate_next_retry(2, now), now + 30 * 60); // 30 min
+        assert_eq!(calculate_next_retry(3, now), now + 2 * 60 * 60); // 2 hours
+        assert_eq!(calculate_next_retry(4, now), now + 6 * 60 * 60); // 6 hours
+        assert_eq!(calculate_next_retry(5, now), now + 12 * 60 * 60); // 12 hours
+        assert_eq!(calculate_next_retry(6, now), now + 24 * 60 * 60); // 24 hours
+        assert_eq!(calculate_next_retry(7, now), now + 24 * 60 * 60); // 24 hours (max)
     }
 }

@@ -405,9 +405,10 @@ fn file_matches_pathspecs(file: &str, pathspecs: &[String], _repo: &Repository) 
 
         // Simple glob matching - check if path starts with prefix before *
         if let Some(prefix) = pathspec.strip_suffix('*')
-            && file.starts_with(prefix) {
-                return true;
-            }
+            && file.starts_with(prefix)
+        {
+            return true;
+        }
     }
 
     false

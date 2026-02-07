@@ -1,5 +1,5 @@
-use crate::git::find_repository;
 use crate::authorship::prompt_utils::find_prompt;
+use crate::git::find_repository;
 
 /// Handle the `show-prompt` command
 ///

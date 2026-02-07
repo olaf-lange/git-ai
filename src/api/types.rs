@@ -25,9 +25,7 @@ impl From<&FileDiffJson> for ApiFileRecord {
                 let json_ranges: Vec<serde_json::Value> = ranges
                     .iter()
                     .map(|range| match range {
-                        LineRange::Single(line) => {
-                            serde_json::Value::Number((*line as u64).into())
-                        }
+                        LineRange::Single(line) => serde_json::Value::Number((*line as u64).into()),
                         LineRange::Range(start, end) => serde_json::Value::Array(vec![
                             serde_json::Value::Number((*start as u64).into()),
                             serde_json::Value::Number((*end as u64).into()),

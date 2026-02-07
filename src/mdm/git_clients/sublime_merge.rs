@@ -227,9 +227,10 @@ impl GitClientInstaller for SublimeMergeInstaller {
         if !dry_run {
             // Ensure parent directory exists
             if let Some(parent) = prefs_path.parent()
-                && !parent.exists() {
-                    fs::create_dir_all(parent)?;
-                }
+                && !parent.exists()
+            {
+                fs::create_dir_all(parent)?;
+            }
             write_atomic(&prefs_path, new_content.as_bytes())?;
         }
 
