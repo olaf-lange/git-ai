@@ -73,7 +73,7 @@ fn push_after_branch_set_upstream_pushes_authorship_notes() {
         .expect("branch -u should succeed");
 
     file.set_contents(vec!["fn initial() {}".ai(), "fn follow_up() {}".ai()]);
-    let followup = local
+    let follow_up = local
         .stage_all_and_commit("follow-up commit")
         .expect("follow-up commit should succeed");
 
@@ -81,7 +81,7 @@ fn push_after_branch_set_upstream_pushes_authorship_notes() {
         .git(&["push"])
         .expect("push with configured upstream should succeed");
 
-    let note = read_remote_authorship_note(&upstream, &followup.commit_sha);
+    let note = read_remote_authorship_note(&upstream, &follow_up.commit_sha);
     assert!(
         note.is_some(),
         "expected authorship notes to be pushed after setting upstream with git branch -u"
