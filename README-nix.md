@@ -216,7 +216,6 @@ The Home Manager module handles hooks and configuration only (not package instal
 | `enable` | bool | `false` | Enable git-ai hooks and config |
 | `package` | package | flake default | The git-ai package (for hooks) |
 | `installHooks` | bool | `true` | Run `git-ai install-hooks` on activation |
-| `createConfig` | bool | `true` | Create `~/.git-ai/config.json` |
 
 ### nixosModules.default
 
